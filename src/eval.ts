@@ -76,6 +76,10 @@ export interface CaseResult {
   exitCode: number
   /** Tokens the run consumed, or null when the transcript carries no usage. */
   tokens: number | null
+  /** Wall-clock for this run. Concurrency inflates it, but both arms are
+   * interleaved through the same pool, so the arms stay comparable. Optional so
+   * a report captured before timing existed still parses. */
+  durationMs?: number
 }
 
 export interface EvalReport {
@@ -406,6 +410,7 @@ export function computeMetrics(results: CaseResult[]): MetricResult[] {
   const specs: Array<{ name: string; unit: string; pick: (r: CaseResult) => number | null }> = [
     { name: 'response length', unit: 'chars', pick: (r) => r.transcript.trim().length || null },
     { name: 'output tokens', unit: 'tokens', pick: (r) => parseOutputTokens(r.transcript) },
+    { name: 'wall clock', unit: 'ms', pick: (r) => r.durationMs ?? null },
   ]
 
   const out: MetricResult[] = []
@@ -416,6 +421,84 @@ export function computeMetrics(results: CaseResult[]): MetricResult[] {
     out.push({ name: spec.name, unit: spec.unit, comparison: mannWhitney(b, s) })
   }
   return out
+}
+
+/**
+ * Delete a run's staging directory, and never let that deletion end the eval.
+ *
+ * On Windows the runner's own process can still hold a handle to the temp tree
+ * for a moment after it exits (and a virus scanner can hold one for longer), so
+ * `rm` throws EBUSY/EPERM. This ran in a `finally`, so the throw propagated out
+ * of the worker and aborted the whole run - discarding every result already
+ * paid for. A leftover temp directory is worth far less than the run, so retry
+ * briefly and then give up quietly.
+ */
+async function cleanupStaging(dir: string): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await rm(dir, { recursive: true, force: true })
+      return
+    } catch {
+      await new Promise((r) => setTimeout(r, 150 * (attempt + 1)))
+    }
+  }
+  try {
+    await rm(dir, { recursive: true, force: true })
+  } catch {
+    // The OS still holds it. It is in the temp directory; leave it there.
+  }
+}
+
+/**
+ * A regression gate for CI. `--min-reduction 50` means "the metric must still be
+ * at least 50% smaller with the skill, and significantly so". Without a gate a
+ * measured claim in a README rots silently: the model changes, the effect
+ * shrinks, and the number in the docs keeps asserting what used to be true.
+ * With one, the build fails the moment the claim stops holding.
+ */
+export function gateReport(
+  report: EvalReport,
+  opts: { minReduction?: number; metric?: string; minPass?: number },
+): { ok: boolean; line: string } {
+  const lines: string[] = []
+  let ok = true
+
+  if (opts.minReduction !== undefined) {
+    const metric = opts.metric ?? 'response length'
+    const metrics = computeMetrics(report.results)
+    const m = metrics.find((x) => x.name === metric)
+    if (!m) {
+      const names = metrics.map((x) => x.name).join(', ') || 'none'
+      lines.push(`  gate: no metric named "${metric}" in this report (have: ${names})`)
+      ok = false
+    } else {
+      const gotPct = -m.comparison.delta * 100
+      const pass = m.comparison.significant && gotPct >= opts.minReduction
+      const sig = m.comparison.significant
+        ? `p=${m.comparison.p.toFixed(3)}`
+        : `NOT significant (p=${m.comparison.p.toFixed(2)})`
+      lines.push(
+        `  gate: ${metric} -${gotPct.toFixed(0)}% vs -${opts.minReduction}% required, ${sig}  ${pass ? 'PASS' : 'FAIL'}`,
+      )
+      ok &&= pass
+    }
+  }
+
+  // A floor on the skill arm's pass rate. This is the gate a *safety* benchmark
+  // needs: there the skill is not supposed to win anything, it is supposed not
+  // to break what already worked, so "did it beat the baseline" is the wrong
+  // question and a floor is the right one.
+  if (opts.minPass !== undefined) {
+    const got = report.skillScore * 100
+    const pass = got >= opts.minPass
+    lines.push(
+      `  gate: skill pass rate ${got.toFixed(0)}% vs ${opts.minPass}% required  ${pass ? 'PASS' : 'FAIL'}`,
+    )
+    ok &&= pass
+  }
+
+  if (lines.length === 0) return { ok: true, line: '' }
+  return { ok, line: lines.join('\n') }
 }
 
 /** Run up to `limit` promises at a time, preserving result order. */
@@ -456,7 +539,9 @@ export async function runEval(
       const command = spec.runner
         .replace('{prompt}', shellQuote(testCase.prompt))
         .replace('{skill}', shellQuote(cwd))
+      const startedAt = Date.now()
       const { stdout, code } = await runCommand(command, timeout)
+      const durationMs = Date.now() - startedAt
       onProgress?.(`[${++done}/${jobs.length}] ${arm.padEnd(8)} ${testCase.id} run ${run}`)
       return {
         id: testCase.id,
@@ -466,9 +551,10 @@ export async function runEval(
         checks: scoreTranscript(stdout, testCase.checks),
         exitCode: code,
         tokens: parseTokens(stdout),
+        durationMs,
       } satisfies CaseResult
     } finally {
-      await rm(cwd, { recursive: true, force: true })
+      await cleanupStaging(cwd)
     }
   })
 

@@ -3,7 +3,7 @@ import test from 'node:test'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { computeMetrics, parseOutputTokens, parseTokens, runEval, scoreTranscript, shellQuote, type CaseResult, type EvalSpec } from './eval.js'
+import { computeMetrics, gateReport, parseOutputTokens, parseTokens, runEval, scoreTranscript, shellQuote, type CaseResult, type EvalReport, type EvalSpec } from './eval.js'
 import { ParseError, parseSkill } from './parse.js'
 import { lint, RULES } from './rules.js'
 import { scaffoldEval, scaffoldSkill } from './scaffold.js'
@@ -498,6 +498,144 @@ else console.log('Fixed, should work now. ' + prompt);
     assert.equal(report.significance.significant, true)
     assert.ok(report.significance.delta > 0)
     assert.equal(report.significance.total, 4, 'pooled outcomes per arm')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('a staging directory that cannot be deleted does not destroy the run', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'skillsmith-test-'))
+  try {
+    await writeFile(join(dir, 'SKILL.md'), GOOD, 'utf8')
+    // The runner leaves a file open inside its own staging dir and keeps the
+    // handle past its own exit on Windows; on POSIX this still exercises the
+    // path where cleanup is attempted after the run produced a real result.
+    const runner = join(dir, 'holder.mjs')
+    await writeFile(
+      runner,
+      `import { openSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+const cwd = process.argv[3];
+const f = join(cwd, 'held.txt');
+writeFileSync(f, 'x');
+openSync(f, 'r');            // deliberately never closed
+console.log('ok');
+`,
+      'utf8',
+    )
+    const spec: EvalSpec = {
+      skill: join(dir, 'SKILL.md'),
+      runner: `node ${JSON.stringify(runner)} {prompt} {skill}`,
+      repeat: 2,
+      timeoutMs: 30_000,
+      cases: [{ id: 'c', prompt: 'p', checks: [{ id: 'ok', describe: '', pattern: 'ok', expect: true }] }],
+    }
+    // The contract: runEval resolves with every result, whatever cleanup did.
+    const report = await runEval(spec)
+    assert.equal(report.results.length, 4, 'all four runs survived cleanup')
+    assert.ok(report.results.every((r) => r.transcript.includes('ok')), 'transcripts intact')
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+})
+
+test('the regression gate passes a real reduction and fails a shrunken one', async () => {
+  const mk = (arm: 'baseline' | 'skill', len: number, i: number): CaseResult => ({
+    id: 'c',
+    arm,
+    run: i,
+    transcript: 'x'.repeat(len),
+    checks: [],
+    exitCode: 0,
+    tokens: null,
+  })
+  // A clean 1000 -> 300 chars split: -70%, and separated enough to be significant.
+  const strong = {
+    results: [
+      ...Array.from({ length: 10 }, (_, i) => mk('baseline', 1000 + i, i)),
+      ...Array.from({ length: 10 }, (_, i) => mk('skill', 300 + i, i)),
+    ],
+  } as unknown as EvalReport
+
+  const pass = gateReport(strong, { minReduction: 50, metric: 'response length' })
+  assert.equal(pass.ok, true, 'a -70% reduction clears a -50% gate')
+  assert.match(pass.line, /PASS/)
+
+  const tooHigh = gateReport(strong, { minReduction: 80, metric: 'response length' })
+  assert.equal(tooHigh.ok, false, 'the same -70% fails an -80% gate')
+  assert.match(tooHigh.line, /FAIL/)
+
+  // A skill that stopped working: the arms overlap, so nothing is significant.
+  const dead = {
+    results: [
+      ...Array.from({ length: 10 }, (_, i) => mk('baseline', 1000 + i, i)),
+      ...Array.from({ length: 10 }, (_, i) => mk('skill', 1000 + i, i)),
+    ],
+  } as unknown as EvalReport
+  const regressed = gateReport(dead, { minReduction: 50, metric: 'response length' })
+  assert.equal(regressed.ok, false, 'no effect must fail the gate')
+  assert.match(regressed.line, /NOT significant/)
+
+  const missing = gateReport(strong, { minReduction: 50, metric: 'nonexistent' })
+  assert.equal(missing.ok, false, 'an unknown metric fails loudly rather than passing vacuously')
+  assert.match(missing.line, /no metric named/)
+
+  // A pass-rate floor is the gate a safety benchmark needs: the skill is not
+  // meant to beat the baseline there, only to avoid breaking it.
+  const scored = { ...strong, skillScore: 0.97 } as unknown as EvalReport
+  assert.equal(gateReport(scored, { minPass: 95 }).ok, true, '97% clears a 95% floor')
+  const under = gateReport({ ...scored, skillScore: 0.8 } as unknown as EvalReport, { minPass: 95 })
+  assert.equal(under.ok, false, '80% fails a 95% floor')
+  assert.match(under.line, /skill pass rate 80% vs 95% required  FAIL/)
+
+  // Both gates together: the reduction passes but the floor does not.
+  const both = gateReport({ ...scored, skillScore: 0.5 } as unknown as EvalReport, {
+    minReduction: 50,
+    minPass: 95,
+  })
+  assert.equal(both.ok, false, 'one failing gate fails the whole run')
+  assert.match(both.line, /PASS[\s\S]*FAIL/, 'both gate lines are reported')
+})
+
+test('runEval times every run and reports wall clock as a metric', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'skillsmith-test-'))
+  try {
+    await writeFile(join(dir, 'SKILL.md'), GOOD, 'utf8')
+    // The skill arm sleeps measurably longer than the baseline, so a correct
+    // implementation must report a positive wall-clock delta (skill is slower).
+    const runner = join(dir, 'slow-runner.mjs')
+    await writeFile(
+      runner,
+      `import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+const sk = join(process.argv[3], '.claude', 'skills');
+const hasSkill = existsSync(sk) && readdirSync(sk).some((d) => existsSync(join(sk, d, 'SKILL.md')));
+const until = Date.now() + (hasSkill ? 260 : 20);
+while (Date.now() < until) {}
+console.log('ok');
+`,
+      'utf8',
+    )
+    const spec: EvalSpec = {
+      skill: join(dir, 'SKILL.md'),
+      runner: `node ${JSON.stringify(runner)} {prompt} {skill}`,
+      repeat: 3,
+      concurrency: 1,
+      timeoutMs: 30_000,
+      cases: [{ id: 'c', prompt: 'p', checks: [{ id: 'ok', describe: '', pattern: 'ok', expect: true }] }],
+    }
+    const report = await runEval(spec)
+    assert.ok(
+      report.results.every((r) => typeof r.durationMs === 'number' && r.durationMs >= 0),
+      'every run carries a duration',
+    )
+    const wall = computeMetrics(report.results).find((m) => m.name === 'wall clock')
+    assert.ok(wall, 'wall clock is reported as a metric')
+    assert.equal(wall.unit, 'ms')
+    assert.ok(
+      wall.comparison.medianSkill > wall.comparison.medianBaseline,
+      `the slower arm must read slower (baseline ${wall.comparison.medianBaseline}, skill ${wall.comparison.medianSkill})`,
+    )
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

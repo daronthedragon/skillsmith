@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
-import { computeMetrics, runEval, type EvalReport, type EvalSpec } from './eval.js'
+import { computeMetrics, gateReport, runEval, type EvalReport, type EvalSpec } from './eval.js'
 import { ParseError, parseSkill } from './parse.js'
 import { lint, RULES, type Finding } from './rules.js'
 import { scaffoldEval, scaffoldSkill } from './scaffold.js'
@@ -35,6 +35,10 @@ const USAGE = `
 
   Options
     --json                    (lint, eval, rules) Machine-readable output
+    --render                  (eval) Re-render a saved report, spending no calls
+    --min-reduction <pct>     (eval) Fail unless the metric shrank at least this much
+    --min-pass <pct>          (eval) Fail unless the skill arm's pass rate is at least this
+    --metric <name>           (eval) Which metric the gate reads (default "response length")
     --summary "<text>"        (new) One line on what the skill does
     --dir <path>              (new) Where to create it          (default ./<name>)
     --settings <path>         (hook) settings.json to edit    (default ~/.claude/settings.json)
@@ -46,6 +50,7 @@ const USAGE = `
     skillsmith new prove-it --summary "Nothing is done until it has been run."
     skillsmith lint ~/.claude/skills/prove-it
     skillsmith eval prove-it/eval.json
+    skillsmith eval terse/eval.json --min-reduction 50      # CI regression gate
     skillsmith hook ~/.claude/skills/prove-it
 `
 
@@ -74,7 +79,7 @@ function parseArgs(argv: string[]): Args {
         continue
       }
       const next = argv[i + 1]
-      if (['summary', 'dir', 'settings'].includes(body)) {
+      if (['summary', 'dir', 'settings', 'min-reduction', 'min-pass', 'metric'].includes(body)) {
         if (next === undefined || next.startsWith('--')) throw new Error(`--${body} needs a value`)
         flags.set(body, next)
         i++
@@ -173,9 +178,29 @@ async function cmdNew(args: Args): Promise<number> {
   return 0
 }
 
+/** Read and validate the gate flags, or null when no gate was asked for. */
+function parseGate(args: Args): { minReduction?: number; metric?: string; minPass?: number } | null {
+  const pct = (name: string): number | undefined => {
+    const raw = args.flags.get(name)
+    if (raw === undefined) return undefined
+    if (raw === true) throw new Error(`--${name} needs a percentage, e.g. --${name} 50`)
+    const n = Number(raw)
+    if (!Number.isFinite(n) || n < 0 || n > 100) {
+      throw new Error(`--${name} must be a percentage between 0 and 100, got "${raw}"`)
+    }
+    return n
+  }
+  const minReduction = pct('min-reduction')
+  const minPass = pct('min-pass')
+  if (minReduction === undefined && minPass === undefined) return null
+  const metricRaw = args.flags.get('metric')
+  return { minReduction, minPass, metric: typeof metricRaw === 'string' ? metricRaw : undefined }
+}
+
 async function cmdEval(args: Args): Promise<number> {
   const specPath = args.positional[0]
   if (!specPath) throw new Error('eval needs a path to an eval.json')
+  const gate = parseGate(args)
 
   // Re-render a saved report (the --json output) without spending any calls.
   if (args.flags.has('render')) {
@@ -190,6 +215,11 @@ async function cmdEval(args: Args): Promise<number> {
     }
     const rendered = renderEvalReport(report)
     process.stdout.write(rendered.text)
+    if (gate) {
+      const g = gateReport(report, gate)
+      process.stdout.write(`${g.line}\n\n`)
+      return g.ok ? 0 : 1
+    }
     return rendered.exitCode
   }
 
@@ -235,11 +265,18 @@ async function cmdEval(args: Args): Promise<number> {
 
   if (args.flags.has('json')) {
     process.stdout.write(JSON.stringify(report, null, 2) + '\n')
-    return 0
+    // A gate still decides the exit code in --json mode, so CI can capture the
+    // report and enforce the threshold in one run instead of paying twice.
+    return gate ? (gateReport(report, gate).ok ? 0 : 1) : 0
   }
 
   const rendered = renderEvalReport(report)
   process.stdout.write(rendered.text)
+  if (gate) {
+    const g = gateReport(report, gate)
+    process.stdout.write(`${g.line}\n\n`)
+    return g.ok ? 0 : 1
+  }
   return rendered.exitCode
 }
 
