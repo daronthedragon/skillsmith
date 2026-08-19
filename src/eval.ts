@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { twoProportion, wilson, type Interval, type Significance } from './stats.js'
+import { mannWhitney, twoProportion, wilson, type Comparison, type Interval, type Significance } from './stats.js'
 
 /**
  * An eval is a set of prompts plus checks that can be scored from the
@@ -109,6 +109,20 @@ export interface EvalReport {
     /** skill − baseline, i.e. what the skill adds per turn. Null if unknown. */
     delta: number | null
   }
+  /**
+   * Magnitude effects the pass/fail checks cannot see: does the skill make
+   * responses shorter, cheaper, use fewer tool calls? Each is a Mann-Whitney
+   * comparison of a continuous per-run metric between the arms. This is what
+   * catches a skill like terse, whose whole value is "less", when every binary
+   * check reads the same in both arms.
+   */
+  metrics: MetricResult[]
+}
+
+export interface MetricResult {
+  name: string
+  unit: string
+  comparison: Comparison
 }
 
 /**
@@ -328,6 +342,54 @@ export function parseTokens(transcript: string): number | null {
   return found ? total : null
 }
 
+/** Output tokens only, from the result event — the part a brevity skill moves. */
+export function parseOutputTokens(transcript: string): number | null {
+  for (const line of transcript.split('\n').reverse()) {
+    const t = line.trim()
+    if (t[0] !== '{') continue
+    try {
+      const o = JSON.parse(t) as Record<string, unknown>
+      if (o.type !== 'result') continue
+      const usage = (o.usage ?? (o.message as Record<string, unknown> | undefined)?.usage) as
+        | Record<string, unknown>
+        | undefined
+      const out = usage?.output_tokens
+      if (typeof out === 'number') return out
+    } catch {
+      // ignore non-JSON lines
+    }
+  }
+  return null
+}
+
+/**
+ * Continuous per-run metrics, compared between arms with Mann-Whitney. Derived
+ * from the stored transcripts, so this runs at render time too and works on a
+ * report captured before metrics existed. A metric is only reported when both
+ * arms have enough non-null samples to test.
+ */
+export function computeMetrics(results: CaseResult[]): MetricResult[] {
+  const byArm = (arm: 'baseline' | 'skill', pick: (r: CaseResult) => number | null): number[] =>
+    results
+      .filter((r) => r.arm === arm)
+      .map(pick)
+      .filter((v): v is number => v !== null)
+
+  const specs: Array<{ name: string; unit: string; pick: (r: CaseResult) => number | null }> = [
+    { name: 'response length', unit: 'chars', pick: (r) => r.transcript.trim().length || null },
+    { name: 'output tokens', unit: 'tokens', pick: (r) => parseOutputTokens(r.transcript) },
+  ]
+
+  const out: MetricResult[] = []
+  for (const spec of specs) {
+    const b = byArm('baseline', spec.pick)
+    const s = byArm('skill', spec.pick)
+    if (b.length < 3 || s.length < 3) continue
+    out.push({ name: spec.name, unit: spec.unit, comparison: mannWhitney(b, s) })
+  }
+  return out
+}
+
 /** Run up to `limit` promises at a time, preserving result order. */
 async function pool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(items.length)
@@ -471,5 +533,6 @@ export async function runEval(
       skillMedian: sMed,
       delta: bMed !== null && sMed !== null ? sMed - bMed : null,
     },
+    metrics: computeMetrics(results),
   }
 }

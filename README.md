@@ -6,7 +6,7 @@
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A520-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-60%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-66%20passing-brightgreen)](#development)
 [![Zero dependencies](https://img.shields.io/badge/runtime%20deps-0-blueviolet)](package.json)
 [![License](https://img.shields.io/badge/license-MIT-black)](LICENSE)
 
@@ -22,7 +22,7 @@ A skill that works is a **procedure** with a **trigger**, a **persistence rule**
 | :--- | :--- |
 | **`lint`** | Checks a SKILL.md against the rules that decide whether it *can* work, and says why each one exists |
 | **`new`** | Scaffolds a skill that passes lint on day one, with an eval spec beside it |
-| **`eval`** | Runs prompts with and without the skill through your agent runner, then reports the delta with a significance test, a confidence interval, and the token cost — so a real change is told apart from noise |
+| **`eval`** | Runs prompts with and without the skill through your agent runner, then reports the pass-rate delta *and* magnitude effects (response length, tokens) — each with a real significance test — so a change is told apart from noise, whether it is "passes more often" or "answers 52% shorter" |
 | **`hook`** | Installs a `UserPromptSubmit` hook so a skill is re-asserted every turn — real persistence, not a promise in the prose |
 
 <p align="center">
@@ -127,8 +127,9 @@ The image below is a **real capture** of `skillsmith eval --render` against the 
 
 A skill is worth shipping when an eval that *can* fail shows a *significant* pass. This one does not, and the tool says so rather than flattering the skill. The history is instructive and left in on purpose: an earlier three-repeat run of this eval showed a +33% that this README reported as a win, and the significance test — run at more repeats — dissolved it to noise. **A positive delta on a tiny sample is not evidence**, which is the whole reason the significance test exists.
 
-Four mechanics make the eval a measurement rather than a demo:
+Five mechanics make the eval a measurement rather than a demo:
 
+- **Magnitude effects, not only pass/fail.** A checklist cannot see a skill whose value is *less of something* — shorter answers, fewer tokens, less code. The eval measures continuous per-run metrics (response length, output tokens) and compares the arms with a non-parametric **Mann-Whitney U** test. This is what caught [terse](https://github.com/daronthedragon/terse): every binary check read 100% in both arms, but response length fell **1,297 → 622 chars, −52%, p = 0.005** — a real win the pass-rate view was blind to. Because the metrics are derived from the stored transcripts, `eval --render` shows them on a report captured before the feature existed, no re-run.
 - **Significance, not just a delta.** Every pass rate carries a 95% Wilson interval, and the two arms are compared with a pooled two-proportion test. The exit code is success only when the improvement is *significant*, not merely positive — which is why the run above exits non-zero. A delta you cannot distinguish from noise is not a result, and an earlier version of the harness happily reported one (a +33% on three runs that vanished under more).
 - **Cost accounting.** Median tokens per run for each arm, and what the skill adds. A skill that helps but costs 3,000 tokens a turn is a different decision from one that is free; the report makes that visible. The token count is read from the `result` event's authoritative total — an earlier regex summed the same usage across events and triple-counted it.
 - **A stream-json runner**, so the transcript contains the actual `tool_use` and `tool_result` events. Under `--output-format text` a tool run is invisible — a model that recites a value from memory looks identical to one that ran it. The stream format makes "did it actually run" directly observable.
@@ -194,7 +195,7 @@ The harness itself is also covered by the test suite with a controlled runner, w
 npm test
 ```
 
-60 tests, covering the parser (folded blocks that span a blank line, a `---` rule inside a value, CRLF, `~~~` and `#`-containing fences), every lint rule against a skill that should pass and one that should fail plus the scoping bugs a four-agent adversarial review surfaced, the statistics (Wilson intervals and the two-proportion test checked against independent references), the eval harness end to end (one-arm staging, per-run isolation, a failing runner scored not crashed, an invalid check regex rejected up front), token accounting that neither truncates a nested usage object nor triple-counts a repeated one, and the persistence hook (case-insensitive extraction, an apostrophe in the path, a BOM-prefixed settings.json, and a refusal to write anything when settings.json is malformed).
+66 tests, covering the parser (folded blocks that span a blank line, a `---` rule inside a value, CRLF, `~~~` and `#`-containing fences), every lint rule against a skill that should pass and one that should fail plus the scoping bugs a four-agent adversarial review surfaced, the statistics (Wilson intervals and the two-proportion test checked against independent references), the eval harness end to end (one-arm staging, per-run isolation, a failing runner scored not crashed, an invalid check regex rejected up front), token accounting that neither truncates a nested usage object nor triple-counts a repeated one, and the persistence hook (case-insensitive extraction, an apostrophe in the path, a BOM-prefixed settings.json, and a refusal to write anything when settings.json is malformed).
 
 ```bash
 npm run typecheck

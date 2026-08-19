@@ -3,7 +3,7 @@ import test from 'node:test'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseTokens, runEval, scoreTranscript, shellQuote, type EvalSpec } from './eval.js'
+import { computeMetrics, parseOutputTokens, parseTokens, runEval, scoreTranscript, shellQuote, type CaseResult, type EvalSpec } from './eval.js'
 import { ParseError, parseSkill } from './parse.js'
 import { lint, RULES } from './rules.js'
 import { scaffoldEval, scaffoldSkill } from './scaffold.js'
@@ -352,6 +352,40 @@ test('parseTokens falls back to message usage when there is no result event', ()
 test('parseTokens returns null when the transcript carries no usage', () => {
   assert.equal(parseTokens('plain text output, no json'), null)
   assert.equal(parseTokens('{"type":"result"}'), null)
+})
+
+test('parseOutputTokens reads only the output_tokens from the result event', () => {
+  const stream = [
+    '{"type":"assistant","message":{"usage":{"input_tokens":10,"output_tokens":99}}}',
+    '{"type":"result","usage":{"input_tokens":10,"output_tokens":42,"cache_read_input_tokens":500}}',
+  ].join('\n')
+  assert.equal(parseOutputTokens(stream), 42)
+  assert.equal(parseOutputTokens('no json here'), null)
+})
+
+test('computeMetrics measures a response-length difference the checks cannot see', () => {
+  // Both arms pass their checks identically, but the skill arm is much shorter.
+  const mk = (arm: 'baseline' | 'skill', text: string): CaseResult => ({
+    id: 'c',
+    arm,
+    run: 1,
+    transcript: text,
+    checks: [{ id: 'x', passed: true, matches: 1, applicable: true }],
+    exitCode: 0,
+    tokens: null,
+  })
+  const long = 'x'.repeat(1200)
+  const short = 'x'.repeat(500)
+  const results = [
+    ...Array.from({ length: 8 }, () => mk('baseline', long)),
+    ...Array.from({ length: 8 }, () => mk('skill', short)),
+  ]
+  const metrics = computeMetrics(results)
+  const len = metrics.find((m) => m.name === 'response length')!
+  assert.ok(len, 'a response-length metric is produced')
+  assert.ok(len.comparison.delta < -0.3, `skill should be much shorter, got ${len.comparison.delta}`)
+  assert.equal(len.comparison.medianBaseline, 1200)
+  assert.equal(len.comparison.medianSkill, 500)
 })
 
 test('shellQuote does not bake stray carets into a Windows prompt', () => {

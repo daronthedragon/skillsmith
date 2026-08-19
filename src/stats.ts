@@ -102,3 +102,74 @@ export function fmtInterval(iv: Interval): string {
   const pct = (n: number) => `${Math.round(n * 100)}`
   return `${pct(iv.point)}% [${pct(iv.low)}-${pct(iv.high)}]`
 }
+
+function median(xs: number[]): number {
+  if (xs.length === 0) return 0
+  const s = [...xs].sort((a, b) => a - b)
+  const m = Math.floor(s.length / 2)
+  return s.length % 2 ? (s[m] as number) : ((s[m - 1] as number) + (s[m] as number)) / 2
+}
+
+export interface Comparison {
+  medianBaseline: number
+  medianSkill: number
+  /** (skill - baseline) / baseline: the fractional change the skill makes. */
+  delta: number
+  /** Mann-Whitney U statistic. */
+  u: number
+  /** Two-sided p-value (normal approximation with tie correction). */
+  p: number
+  significant: boolean
+  /** How many samples each arm contributed. */
+  n: number
+}
+
+/**
+ * Mann-Whitney U test on two samples of a continuous metric — response length,
+ * output tokens, tool calls. The two-proportion test answers "does a pass rate
+ * differ"; this answers "does a *magnitude* differ", which is what a skill like
+ * terse (shorter answers) or ponytail (less code) actually changes. It is
+ * non-parametric, so it makes no normality assumption about lengths, which are
+ * skewed. Uses the tie-corrected normal approximation, appropriate from roughly
+ * n>=8 per arm.
+ */
+export function mannWhitney(baseline: number[], skill: number[], alpha = 0.05): Comparison {
+  const nb = baseline.length
+  const ns = skill.length
+  const medB = median(baseline)
+  const medS = median(skill)
+  const delta = medB !== 0 ? (medS - medB) / medB : 0
+
+  if (nb < 3 || ns < 3) {
+    return { medianBaseline: medB, medianSkill: medS, delta, u: 0, p: 1, significant: false, n: Math.min(nb, ns) }
+  }
+
+  // Average ranks over the pooled sample, ties shared.
+  const pooled = [...skill.map((v) => ({ v, arm: 's' as const })), ...baseline.map((v) => ({ v, arm: 'b' as const }))]
+  pooled.sort((a, b) => a.v - b.v)
+  const ranks = new Array<number>(pooled.length)
+  for (let i = 0; i < pooled.length; ) {
+    let j = i
+    while (j + 1 < pooled.length && (pooled[j + 1] as { v: number }).v === (pooled[i] as { v: number }).v) j++
+    const avg = (i + j) / 2 + 1
+    for (let k = i; k <= j; k++) ranks[k] = avg
+    i = j + 1
+  }
+
+  const rankSumSkill = pooled.reduce((sum, p, idx) => (p.arm === 's' ? sum + (ranks[idx] as number) : sum), 0)
+  const uSkill = rankSumSkill - (ns * (ns + 1)) / 2
+  const u = Math.min(uSkill, ns * nb - uSkill)
+
+  const n = ns + nb
+  // Tie correction for the standard deviation.
+  const counts = new Map<number, number>()
+  for (const p of pooled) counts.set(p.v, (counts.get(p.v) ?? 0) + 1)
+  let tieTerm = 0
+  for (const t of counts.values()) tieTerm += t * t * t - t
+  const sd = Math.sqrt((ns * nb / 12) * (n + 1 - tieTerm / (n * (n - 1))))
+  if (sd === 0) return { medianBaseline: medB, medianSkill: medS, delta, u, p: 1, significant: false, n: Math.min(nb, ns) }
+
+  const z = (u - (ns * nb) / 2) / sd
+  const p = 2 * (1 - normalCdf(Math.abs(z)))
+  return { medianBaseline: medB, medianSkill: medS, delta, u, p, significant: p < alpha, n: Math.min(nb, ns) }
+}

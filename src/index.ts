@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
-import { runEval, type EvalReport, type EvalSpec } from './eval.js'
+import { computeMetrics, runEval, type EvalReport, type EvalSpec } from './eval.js'
 import { ParseError, parseSkill } from './parse.js'
 import { lint, RULES, type Finding } from './rules.js'
 import { scaffoldEval, scaffoldSkill } from './scaffold.js'
@@ -313,11 +313,33 @@ function renderEvalReport(report: EvalReport): { text: string; exitCode: number 
     )
   }
 
+  // Magnitude effects the pass/fail checks cannot see (shorter, cheaper).
+  // Recomputed from the stored transcripts, so this shows on saved reports too.
+  const metrics = computeMetrics(report.results)
+  let metricWin = false
+  for (const m of metrics) {
+    const cmp = m.comparison
+    const pctDelta = `${cmp.delta >= 0 ? '+' : ''}${Math.round(cmp.delta * 100)}%`
+    const verdict = cmp.significant
+      ? cmp.delta < 0
+        ? c.green(`significant (p=${cmp.p.toFixed(3)})`)
+        : c.red(`significant, larger (p=${cmp.p.toFixed(3)})`)
+      : c.dim(`not significant (p=${cmp.p.toFixed(2)})`)
+    if (cmp.significant && cmp.delta < 0) metricWin = true
+    out.push(
+      `  ${m.name.padEnd(16)}${Math.round(cmp.medianBaseline).toLocaleString()} → ` +
+        `${Math.round(cmp.medianSkill).toLocaleString()} ${m.unit} median  ` +
+        `${pctDelta}  ${verdict}`,
+    )
+  }
+
   out.push('')
   out.push(c.dim(`  ${report.results.length} runs. Transcripts are in the --json output.`))
   out.push('')
-  // Exit success only when the improvement is real, not merely positive.
-  return { text: out.join('\n'), exitCode: sig.significant && sig.delta > 0 ? 0 : 1 }
+  // Success when the skill helps on a pass-rate check OR significantly reduces a
+  // magnitude metric (shorter, cheaper) - a real effect either way.
+  const exitCode = (sig.significant && sig.delta > 0) || metricWin ? 0 : 1
+  return { text: out.join('\n'), exitCode }
 }
 
 function cmdRules(args: Args): number {
