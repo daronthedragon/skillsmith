@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { twoProportion, wilson, type Interval, type Significance } from './stats.js'
 
 /**
  * An eval is a set of prompts plus checks that can be scored from the
@@ -55,6 +56,8 @@ export interface EvalSpec {
   /** Repeat each case this many times to smooth variance. Default 1. */
   repeat?: number
   timeoutMs?: number
+  /** Runs in flight at once. Default 4. */
+  concurrency?: number
 }
 
 export interface CaseResult {
@@ -64,6 +67,8 @@ export interface CaseResult {
   transcript: string
   checks: Array<{ id: string; passed: boolean; matches: number; applicable?: boolean }>
   exitCode: number
+  /** Tokens the run consumed, or null when the transcript carries no usage. */
+  tokens: number | null
 }
 
 export interface EvalReport {
@@ -83,6 +88,25 @@ export interface EvalReport {
   /** Mean pass rate across all checks, both arms. */
   baselineScore: number
   skillScore: number
+  /**
+   * Significance of the overall difference, pooled across every check outcome
+   * so the sample is as large as the eval affords. This is what separates a
+   * real change from three lucky runs.
+   */
+  significance: Significance & {
+    baseline: Interval
+    skill: Interval
+    baselinePassed: number
+    skillPassed: number
+    total: number
+  }
+  /** Median tokens per run for each arm, and the skill's added cost. */
+  cost: {
+    baselineMedian: number | null
+    skillMedian: number | null
+    /** skill − baseline, i.e. what the skill adds per turn. Null if unknown. */
+    delta: number | null
+  }
 }
 
 /**
@@ -155,17 +179,16 @@ export function scoreTranscript(transcript: string, checks: Check[]): CaseResult
 }
 
 /**
- * Materialise a skills directory for one arm. The skill arm gets a copy of
- * SKILL.md under its own name; the baseline arm gets an empty directory, so
- * both arms see the same harness with only the skill varying.
+ * Materialise a throwaway project directory for ONE run. Agents that load
+ * project skills from `<cwd>/.claude/skills/` pick the skill up by running with
+ * this directory as cwd; the baseline gets the same layout with the skills
+ * folder empty, so the only difference between arms is the skill.
+ *
+ * One directory per run, not per arm: a run whose prompt writes a file would
+ * otherwise leave it for the next run in the same arm to trip over, and it
+ * makes runs safe to execute concurrently.
  */
-async function stageSkill(skillPath: string, arm: 'baseline' | 'skill'): Promise<string> {
-  // Each arm gets a throwaway project directory. Agents that load project
-  // skills from `<cwd>/.claude/skills/` pick the skill up simply by running
-  // with this directory as cwd, which is what the `{skill}` placeholder is for
-  // (e.g. `cd {skill} && claude -p {prompt}`). The baseline arm gets the same
-  // layout with the skills folder empty, so the only difference between arms
-  // is the skill.
+async function stageRun(skillPath: string, arm: 'baseline' | 'skill'): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), `skillsmith-${arm}-`))
   const { mkdir } = await import('node:fs/promises')
   const skillsDir = join(dir, '.claude', 'skills')
@@ -179,38 +202,78 @@ async function stageSkill(skillPath: string, arm: 'baseline' | 'skill'): Promise
   return dir
 }
 
+/**
+ * Total tokens the run consumed, summed from any `usage` objects in the
+ * transcript. Works on Claude Code's stream-json (a `result` event and per
+ * assistant message carry usage); returns null when the format carries no
+ * usage, so the report can distinguish "zero" from "unknown".
+ */
+export function parseTokens(transcript: string): number | null {
+  let total = 0
+  let found = false
+  // Match "usage": { ... } objects and sum the token fields inside each.
+  for (const m of transcript.matchAll(/"usage"\s*:\s*\{([^}]*)\}/g)) {
+    const body = m[1] ?? ''
+    for (const f of body.matchAll(/"(input_tokens|output_tokens|cache_creation_input_tokens|cache_read_input_tokens)"\s*:\s*(\d+)/g)) {
+      total += Number(f[2])
+      found = true
+    }
+  }
+  return found ? total : null
+}
+
+/** Run up to `limit` promises at a time, preserving result order. */
+async function pool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (next < items.length) {
+      const i = next++
+      results[i] = await fn(items[i] as T)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
 export async function runEval(
   spec: EvalSpec,
   onProgress?: (line: string) => void,
 ): Promise<EvalReport> {
   const repeat = spec.repeat ?? 1
   const timeout = spec.timeoutMs ?? 180_000
-  const results: CaseResult[] = []
+  const concurrency = spec.concurrency ?? 4
 
-  for (const arm of ['baseline', 'skill'] as const) {
-    const skillsDir = await stageSkill(spec.skill, arm)
+  // Flatten every (arm, case, run) into one job list, then run the list
+  // through a bounded pool. Cheaper wall-clock, and each job is independent.
+  const jobs = (['baseline', 'skill'] as const).flatMap((arm) =>
+    spec.cases.flatMap((testCase) =>
+      Array.from({ length: repeat }, (_, i) => ({ arm, testCase, run: i + 1 })),
+    ),
+  )
+
+  let done = 0
+  const results = await pool(jobs, concurrency, async ({ arm, testCase, run }) => {
+    const cwd = await stageRun(spec.skill, arm)
     try {
-      for (const testCase of spec.cases) {
-        for (let run = 1; run <= repeat; run++) {
-          const command = spec.runner
-            .replace('{prompt}', shellQuote(testCase.prompt))
-            .replace('{skill}', shellQuote(skillsDir))
-          onProgress?.(`${arm.padEnd(8)} ${testCase.id} run ${run}/${repeat}`)
-          const { stdout, code } = await runCommand(command, timeout)
-          results.push({
-            id: testCase.id,
-            arm,
-            run,
-            transcript: stdout,
-            checks: scoreTranscript(stdout, testCase.checks),
-            exitCode: code,
-          })
-        }
-      }
+      const command = spec.runner
+        .replace('{prompt}', shellQuote(testCase.prompt))
+        .replace('{skill}', shellQuote(cwd))
+      const { stdout, code } = await runCommand(command, timeout)
+      onProgress?.(`[${++done}/${jobs.length}] ${arm.padEnd(8)} ${testCase.id} run ${run}`)
+      return {
+        id: testCase.id,
+        arm,
+        run,
+        transcript: stdout,
+        checks: scoreTranscript(stdout, testCase.checks),
+        exitCode: code,
+        tokens: parseTokens(stdout),
+      } satisfies CaseResult
     } finally {
-      await rm(skillsDir, { recursive: true, force: true })
+      await rm(cwd, { recursive: true, force: true })
     }
-  }
+  })
 
   const summary: EvalReport['summary'] = []
   for (const testCase of spec.cases) {
@@ -242,5 +305,55 @@ export async function runEval(
   const mean = (arm: 'baseline' | 'skill') =>
     summary.length === 0 ? 0 : summary.reduce((s, r) => s + r[arm], 0) / summary.length
 
-  return { spec, results, summary, baselineScore: mean('baseline'), skillScore: mean('skill') }
+  // Pool every applicable check outcome across all runs into one two-arm
+  // comparison. Per-check n is tiny; pooled n is large enough to test.
+  const outcomes = (arm: 'baseline' | 'skill') => {
+    let passed = 0
+    let total = 0
+    for (const r of results.filter((x) => x.arm === arm)) {
+      for (const c of r.checks) {
+        if (c.applicable === false) continue
+        total++
+        if (c.passed) passed++
+      }
+    }
+    return { passed, total }
+  }
+  const base = outcomes('baseline')
+  const skl = outcomes('skill')
+  const sig = twoProportion(base.passed, base.total, skl.passed, skl.total)
+
+  const median = (arm: 'baseline' | 'skill'): number | null => {
+    const xs = results
+      .filter((r) => r.arm === arm)
+      .map((r) => r.tokens)
+      .filter((t): t is number => t !== null)
+      .sort((a, b) => a - b)
+    if (xs.length === 0) return null
+    const mid = Math.floor(xs.length / 2)
+    return xs.length % 2 ? (xs[mid] as number) : ((xs[mid - 1] as number) + (xs[mid] as number)) / 2
+  }
+  const bMed = median('baseline')
+  const sMed = median('skill')
+
+  return {
+    spec,
+    results,
+    summary,
+    baselineScore: mean('baseline'),
+    skillScore: mean('skill'),
+    significance: {
+      ...sig,
+      baseline: wilson(base.passed, base.total),
+      skill: wilson(skl.passed, skl.total),
+      baselinePassed: base.passed,
+      skillPassed: skl.passed,
+      total: base.total,
+    },
+    cost: {
+      baselineMedian: bMed,
+      skillMedian: sMed,
+      delta: bMed !== null && sMed !== null ? sMed - bMed : null,
+    },
+  }
 }

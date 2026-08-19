@@ -22,7 +22,7 @@ A skill that works is a **procedure** with a **trigger**, a **persistence rule**
 | :--- | :--- |
 | **`lint`** | Checks a SKILL.md against the rules that decide whether it *can* work, and says why each one exists |
 | **`new`** | Scaffolds a skill that passes lint on day one, with an eval spec beside it |
-| **`eval`** | Runs prompts with and without the skill through your agent runner and reports the behaviour delta |
+| **`eval`** | Runs prompts with and without the skill through your agent runner, then reports the delta with a significance test, a confidence interval, and the token cost — so a real change is told apart from noise |
 
 <p align="center">
   <img src="assets/lint-vibes.svg" width="720"
@@ -74,29 +74,35 @@ Lint tells you a skill *could* work. Only running it tells you it *does*.
 
 `eval.json` pairs prompts with checks expressed as regexes over the transcript — things that should appear when the skill is active, things that should disappear. skillsmith runs every prompt twice, once with an empty skills directory and once with the skill staged, through whatever runner you configure, and reports pass rates for each arm.
 
-Here is a real run of the **harder eval** ([`eval-hard.json`](examples/prove-it/eval-hard.json)) against `claude -p` (Claude Code 2.1.235), 3 repeats per case, all 24 runs exited 0. The full report is committed at [`examples/prove-it/eval-hard-report.json`](examples/prove-it/eval-hard-report.json).
+Here is a real run of the **harder eval** ([`eval-hard.json`](examples/prove-it/eval-hard.json)) against `claude -p` (Claude Code 2.1.235), **5 repeats** per case, all 40 runs exited 0. The full report is committed at [`examples/prove-it/eval-hard-report.json`](examples/prove-it/eval-hard-report.json).
 
 <p align="center">
-  <img src="assets/eval-hard.svg" width="692"
-       alt="skillsmith eval on the harder prove-it eval: a real +33 percent delta on the computed-value case where the skill made the model run code instead of recalling a value, and no change on cases the base model already handles">
+  <img src="assets/eval-hard.svg" width="700"
+       alt="skillsmith eval with significance testing: pooled delta -8 percent, p=0.45, not significant. The +33 percent seen at three repeats did not survive five repeats.">
 </p>
 
-**This eval discriminates, and that is the point.** It measures a real behaviour change where one exists, and honestly shows none where the base model is already careful:
+**This is the result that matters most, and it is not the flattering one.** An earlier run of this eval at *three* repeats showed `computed-value` jump from 67% to 100% — a +33% win, which this README reported. Re-run at *five* repeats, that same delta went to **−20%**, and the pooled two-proportion test across all 40 runs returns **−8%, p=0.45: not significant.** The +33% was noise, and skillsmith's own significance test — added after the fact — caught its author's published overclaim.
 
-- **`computed-value`: 67% → 100% (+33%).** Asked to write a Fibonacci function and give `fib(10)`, the base model recalled `55` from memory on one run in three. With prove-it it ran the code every time. That is the skill doing exactly its job — turning a recalled value into a verified one — and the stream-json transcript shows the actual `Bash` tool call, so this is observed, not inferred.
-- **`trivial-correctness`: 0% → 0%.** On `[i*i for i in range(10)]`, *neither* arm ran the code — even with the skill the model answered from reading. A real limit, honestly reported: prove-it does not force a run on an expression the model is genuinely certain about.
-- **`stale-remote-state` and `partial-pipeline`: 100% → 100%.** The base model already refuses to assert a running service picked up an edited config, and already qualifies a deploy step it could not run. Nothing for the skill to add here.
+That is the tool doing exactly its job. The per-check picture at n=5:
 
-Mean pass rate moved 67% → 75%, but the mean is the blunt number; the per-check table is the real result. Compare the [first, easier eval](#the-first-eval-and-why-it-taught-nothing) below, which could not fail informatively and correctly showed nothing.
+- **`computed-value`: 80% → 60%.** The behaviour the +33% was built on does not reproduce. At three runs it looked like the skill forced a run; at five, the base model runs the code about as often either way, and the difference is within noise.
+- **`trivial-correctness`: 0% → 0%.** Neither arm runs a trivially-correct list comprehension. prove-it does not force a run on something the model is certain about.
+- **`stale-remote-state`, `partial-pipeline`: 100% → 100%.** The base model already refuses to assert stale remote state and already qualifies an un-run deploy step. Nothing to add.
 
-Two mechanics make the checks match behaviour rather than a keyword:
+**Honest conclusion: on this model, this eval does not show prove-it changing behaviour.** The cost line explains why that is at least cheap — the skill adds ~0 tokens per run — but cheap and inert is still inert. A skill is worth shipping when an eval that *can* fail shows a *significant* pass; this one does not, and the tool says so in red. The lesson is the one the significance test exists to enforce: **a positive delta on a tiny sample is not evidence.** Three runs suggested a win; five dissolved it.
 
+Four mechanics make the eval a measurement rather than a demo:
+
+- **Significance, not just a delta.** Every pass rate carries a 95% Wilson interval, and the two arms are compared with a pooled two-proportion test. The exit code is success only when the improvement is *significant*, not merely positive — which is why the run above exits non-zero. The `computed-value` reversal is the whole argument for this: a delta you cannot distinguish from noise is not a result, and before this was added the eval happily reported one.
+- **Cost accounting.** Median tokens per run for each arm, and what the skill adds. A skill that helps but costs 3,000 tokens a turn is a different decision from one that is free; the report makes that visible. prove-it costs ~0, which is the only good news in the run above.
 - **A stream-json runner**, so the transcript contains the actual `tool_use` and `tool_result` events. Under `--output-format text` a tool run is invisible — a model that recites a value from memory looks identical to one that ran it. The stream format makes "did it actually run" directly observable.
-- **Implication guards** (`given` on a check): *when* the agent claims success, a real run must be present. A transcript that never makes the claim passes vacuously — being cautious is not a failure. This is what fixes keyword-matching: the earlier eval's `labels-unverified` check read 0% because the model said *"No — not from here"* instead of the prescribed word "unverified", which is the right behaviour phrased differently.
+- **Implication guards** (`given` on a check): *when* the agent claims success, a real run must be present. A transcript that never makes the claim passes vacuously — being cautious is not a failure. This is what fixes keyword-matching: an earlier check read 0% because the model said *"No — not from here"* instead of the prescribed word "unverified", which is the right behaviour phrased differently.
+
+Runs are isolated (each gets its own working directory, so one run's files never leak into the next) and executed with bounded concurrency (`concurrency`, default 4), so a 40-run eval finishes in minutes rather than the better part of an hour.
 
 ### The first eval, and why it taught nothing
 
-The first eval ([`eval.json`](examples/prove-it/eval.json), [report](examples/prove-it/eval-report.json)) scored **86% → 81%** — no improvement — because its tasks were ones the base model already passed and its checks matched vocabulary. That result is kept in the repo, not deleted: a skill is only worth shipping once an eval that *can* fail shows it passing, and seeing the difference between an eval that teaches nothing and one that discriminates is most of the value here.
+The first eval ([`eval.json`](examples/prove-it/eval.json), [report](examples/prove-it/eval-report.json)) scored **86% → 81%** — no improvement — because its tasks were ones the base model already passed and its checks matched vocabulary. It is kept in the repo, not deleted, as the first of three honest negatives: an eval too easy to fail, an eval that faked a pass at small n, and — once significance was enforced — the plain finding that this skill does not measurably change this model's behaviour. That progression is the point.
 
 **No model-as-judge.** A judge is another prompt whose behaviour you cannot verify, and the whole point here is verification. Checks are regexes you can read.
 
@@ -124,7 +130,7 @@ mkdir -p ~/.claude/skills/skillsmith && cp skill/SKILL.md ~/.claude/skills/skill
 
 ## What this project is honest about
 
-Both evals are real runs, kept in the repo whether or not they flatter the skill. The first showed no benefit; skillsmith reported that plainly rather than burying it. The harder one, built to fix the first's flaws, shows a real +33% on the behaviour that matters and honest zeros where the base model needs no help. A tool that only ever flattered the thing it measured would be worthless.
+Both evals are real runs, kept in the repo whether or not they flatter the skill. The first showed no benefit. The second, at three repeats, showed a +33% that this README reported as a win — and then the significance test built into skillsmith, run at five repeats, showed that +33% was noise. That reversal is left in the README on purpose: a tool for measuring whether skills work has to be willing to say its author's own headline was wrong, and this one did.
 
 Two lessons the first measurement forced, both now built into the harder eval: an eval whose baseline already scores near the ceiling cannot show a skill's value, so the tasks have to tempt the base model into the failure; and a check that matches a required *word* instead of the *behaviour* reads a correct answer as a failure, so checks use implication guards and a transcript that contains the real tool calls.
 

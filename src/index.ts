@@ -5,6 +5,7 @@ import { runEval, type EvalSpec } from './eval.js'
 import { ParseError, parseSkill } from './parse.js'
 import { lint, RULES, type Finding } from './rules.js'
 import { scaffoldEval, scaffoldSkill } from './scaffold.js'
+import { fmtInterval } from './stats.js'
 
 const useColour = process.stdout.isTTY || process.env.FORCE_COLOR !== undefined
 const paint = (code: string, t: string) => (useColour ? `[${code}m${t}[0m` : t)
@@ -213,16 +214,52 @@ async function cmdEval(args: Args): Promise<number> {
   const s = Math.round(report.skillScore * 100)
   const verdict =
     s > b
-      ? c.green(`the skill changed behaviour: ${b}% → ${s}%`)
+      ? c.green(`mean pass rate ${b}% → ${s}%`)
       : s === b
-        ? c.yellow(`no measurable change: ${b}% → ${s}%. The skill is not doing anything.`)
-        : c.red(`the skill made things worse: ${b}% → ${s}%`)
+        ? c.yellow(`mean pass rate unchanged at ${b}%`)
+        : c.red(`mean pass rate fell ${b}% → ${s}%`)
   out.push(`  ${verdict}`)
+
+  // The number the mean cannot give you: is the difference real at this n?
+  const sig = report.significance
+  const pct = (n: number) => `${Math.round(n * 100)}%`
+  const line =
+    sig.significant
+      ? c.green(
+          `significant: the skill's effect is real (p=${sig.p.toFixed(3)}, ${sig.total} outcomes/arm)`,
+        )
+      : sig.suggestMoreRuns
+        ? c.yellow(
+            `promising but unproven: +${pct(sig.delta)} could be noise at this sample ` +
+              `(p=${sig.p.toFixed(2)}). Raise "repeat" and re-run.`,
+          )
+        : c.dim(`not distinguishable from noise (p=${sig.p.toFixed(2)})`)
+  out.push(`  ${line}`)
+  out.push(
+    c.dim(
+      `  95% CI  without ${fmtInterval(sig.baseline)}   with ${fmtInterval(sig.skill)}`,
+    ),
+  )
+
+  if (report.cost.baselineMedian !== null && report.cost.skillMedian !== null) {
+    const d = report.cost.delta ?? 0
+    const sign = d >= 0 ? '+' : ''
+    const tone = d > report.cost.baselineMedian * 0.5 ? c.yellow : c.dim
+    out.push(
+      tone(
+        `  cost    ${report.cost.baselineMedian.toLocaleString()} → ` +
+          `${report.cost.skillMedian.toLocaleString()} tokens/run median ` +
+          `(${sign}${d.toLocaleString()} for the skill)`,
+      ),
+    )
+  }
+
   out.push('')
   out.push(c.dim(`  ${report.results.length} runs. Transcripts are in the --json output.`))
   out.push('')
   process.stdout.write(out.join('\n'))
-  return s > b ? 0 : 1
+  // Exit success only when the improvement is real, not merely positive.
+  return sig.significant && sig.delta > 0 ? 0 : 1
 }
 
 function cmdRules(args: Args): number {

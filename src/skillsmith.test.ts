@@ -3,7 +3,7 @@ import test from 'node:test'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runEval, scoreTranscript, type EvalSpec } from './eval.js'
+import { parseTokens, runEval, scoreTranscript, type EvalSpec } from './eval.js'
 import { ParseError, parseSkill } from './parse.js'
 import { lint, RULES } from './rules.js'
 import { scaffoldEval, scaffoldSkill } from './scaffold.js'
@@ -223,6 +223,19 @@ test('an implication guard makes a check vacuously pass when the trigger is abse
   assert.equal(backed.passed, true)
 })
 
+test('parseTokens sums usage across a stream-json transcript', () => {
+  const stream = [
+    '{"type":"assistant","message":{"usage":{"input_tokens":100,"output_tokens":20}}}',
+    '{"type":"assistant","message":{"usage":{"input_tokens":50,"output_tokens":10,"cache_read_input_tokens":5}}}',
+    '{"type":"result","usage":{"input_tokens":0,"output_tokens":3}}',
+  ].join('\n')
+  assert.equal(parseTokens(stream), 100 + 20 + 50 + 10 + 5 + 0 + 3)
+})
+
+test('parseTokens returns null when the transcript carries no usage', () => {
+  assert.equal(parseTokens('plain text output, no json'), null)
+})
+
 test('scoreTranscript honours expect, min and max', () => {
   const t = 'ran npm test\nran npm test\nshould work'
   const r = scoreTranscript(t, [
@@ -288,6 +301,44 @@ else console.log('Fixed, should work now. ' + prompt);
     assert.equal(report.skillScore, 1, 'skill arm passes both checks')
     const runs = report.summary.find((s) => s.checkId === 'runs-command')!
     assert.equal(runs.delta, 1)
+    // A perfect 0/4 vs 4/4 split is significant even at this small n.
+    assert.equal(report.significance.significant, true)
+    assert.ok(report.significance.delta > 0)
+    assert.equal(report.significance.total, 4, 'pooled outcomes per arm')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('runEval isolates each run in its own working directory', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'skillsmith-test-'))
+  try {
+    await writeFile(join(dir, 'SKILL.md'), GOOD, 'utf8')
+    // A runner that appends its cwd to a shared log, so we can see whether two
+    // runs in the same arm ever shared one.
+    const runner = join(dir, 'cwd-runner.mjs')
+    await writeFile(
+      runner,
+      `import { appendFileSync } from 'node:fs';
+appendFileSync(${JSON.stringify(join(dir, 'cwds.txt'))}, process.cwd() + "\\n");
+console.log("ok");
+`,
+      'utf8',
+    )
+    const spec: EvalSpec = {
+      skill: join(dir, 'SKILL.md'),
+      // The runner ignores {prompt}; {skill} is the staged cwd we cd into.
+      runner: `cd {skill} && node ${JSON.stringify(runner)} {prompt}`,
+      repeat: 3,
+      concurrency: 2,
+      timeoutMs: 30_000,
+      cases: [{ id: 'c', prompt: 'p', checks: [{ id: 'ok', describe: '', pattern: 'ok', expect: true }] }],
+    }
+    await runEval(spec)
+    const { readFileSync } = await import('node:fs')
+    const cwds = readFileSync(join(dir, 'cwds.txt'), 'utf8').trim().split('\n')
+    assert.equal(cwds.length, 6, 'two arms x three runs each executed')
+    assert.equal(new Set(cwds).size, 6, 'every run had a distinct working directory')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

@@ -1,7 +1,7 @@
 {
   "skill": "SKILL.md",
   "runner": "cd {skill} && claude -p {prompt} --output-format stream-json --verbose --dangerously-skip-permissions --no-session-persistence",
-  "repeat": 3,
+  "repeat": 5,
   "timeoutMs": 240000,
   "cases": [
     {
@@ -79,5 +79,6 @@
         }
       ]
     }
-  ]
+  ],
+  "concurrency": 4
 }
