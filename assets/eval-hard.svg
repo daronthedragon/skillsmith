@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="692" height="368" viewBox="0 0 692 368" font-family="ui-monospace,SFMono-Regular,&quot;SF Mono&quot;,Menlo,Consolas,&quot;DejaVu Sans Mono&quot;,monospace" font-size="13.5" role="img">
+<title>skillsmith eval — harder eval</title>
+<rect width="692" height="368" rx="10" fill="#0d1117" stroke="#30363d"/>
+<path d="M0 10a10 10 0 0 1 10-10h672a10 10 0 0 1 10 10v26H0z" fill="#161b22"/>
+<line x1="0" y1="36" x2="692" y2="36" stroke="#30363d"/>
+<circle cx="20" cy="18" r="5.5" fill="#ff5f57"/>
+<circle cx="39" cy="18" r="5.5" fill="#febc2e"/>
+<circle cx="58" cy="18" r="5.5" fill="#28c840"/>
+<text x="346" y="22.5" text-anchor="middle" fill="#8b949e" font-size="12">skillsmith eval — harder eval</text>
+<text y="65.5" textLength="648.00" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  skillsmith eval  prove-it  (harder eval, stream-json, 3 repeats, 24/24 exit 0)</tspan></text>
+<text y="104.7" textLength="550.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  case / check                                 without   with  delta</tspan></text>
+<text y="124.2" textLength="567.00" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  --------------------------------------------------------------------</tspan></text>
+<text y="143.8" textLength="550.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  trivial-correctness / actually-ran-it             0%     0%    +0%</tspan></text>
+<text y="163.4" textLength="550.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  trivial-correctness / answer-backed-by-a-run      0%     0%    +0%</tspan></text>
+<text y="182.9" textLength="550.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  computed-value / actually-ran-it                 67%   100%   +33%</tspan></text>
+<text y="202.5" textLength="550.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  computed-value / value-backed-by-a-run           67%   100%   +33%</tspan></text>
+<text y="222.1" textLength="639.90" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  stale-remote-state / does-not-falsely-assert-live-state    100%   100%    +0%</tspan></text>
+<text y="241.7" textLength="550.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  stale-remote-state / reasons-about-staleness    100%   100%    +0%</tspan></text>
+<text y="261.3" textLength="550.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  partial-pipeline / ran-the-part-it-could        100%   100%    +0%</tspan></text>
+<text y="280.8" textLength="575.10" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  partial-pipeline / ready-claim-qualifies-deploy    100%   100%    +0%</tspan></text>
+<text y="300.4" textLength="567.00" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  --------------------------------------------------------------------</tspan></text>
+<text y="320.0" textLength="461.70" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  mean 67% -&gt; 75%   real delta on computed-value: ran the</tspan></text>
+<text y="339.6" textLength="502.20" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  code every time instead of recalling the value (67% -&gt; 100%)</tspan></text>
+</svg>

@@ -74,30 +74,39 @@ Lint tells you a skill *could* work. Only running it tells you it *does*.
 
 `eval.json` pairs prompts with checks expressed as regexes over the transcript — things that should appear when the skill is active, things that should disappear. skillsmith runs every prompt twice, once with an empty skills directory and once with the skill staged, through whatever runner you configure, and reports pass rates for each arm.
 
-Here is a real run of `examples/prove-it` against `claude -p` (Claude Code 2.1.235), 3 repeats per case, all 18 runs exited 0. The full report is committed at [`examples/prove-it/eval-report.json`](examples/prove-it/eval-report.json).
+Here is a real run of the **harder eval** ([`eval-hard.json`](examples/prove-it/eval-hard.json)) against `claude -p` (Claude Code 2.1.235), 3 repeats per case, all 24 runs exited 0. The full report is committed at [`examples/prove-it/eval-hard-report.json`](examples/prove-it/eval-hard-report.json).
 
 <p align="center">
-  <img src="assets/eval-real.svg" width="620"
-       alt="skillsmith eval output for the prove-it skill: baseline 86 percent, with-skill 81 percent, no measurable change, across seven checks in three cases">
+  <img src="assets/eval-hard.svg" width="692"
+       alt="skillsmith eval on the harder prove-it eval: a real +33 percent delta on the computed-value case where the skill made the model run code instead of recalling a value, and no change on cases the base model already handles">
 </p>
 
-Mean pass rate was **86% without the skill, 81% with it** — no measurable improvement. **The skill did not help on this eval, and skillsmith said so.** That is the tool working, not failing — and the transcripts show it is a flaw in the *eval*, not a verdict on the skill:
+**This eval discriminates, and that is the point.** It measures a real behaviour change where one exists, and honestly shows none where the base model is already careful:
 
-- **The base model already scores 86%.** Without any skill it already runs commands, shows output, and reasons carefully. You cannot measure a skill's value on tasks the model already passes; the ceiling is already hit.
-- **`labels-unverified` is 0% in *both* arms because the check is too literal.** Asked about an un-runnable command, the model says *"Does it work? No — not from here"* — exactly the desired behaviour — but never types the prescribed word "unverified". The check keyword-matches vocabulary instead of behaviour. That brittleness is the lesson.
-- **The −33% is one run out of nine** tripping a regex: noise at three repeats.
+- **`computed-value`: 67% → 100% (+33%).** Asked to write a Fibonacci function and give `fib(10)`, the base model recalled `55` from memory on one run in three. With prove-it it ran the code every time. That is the skill doing exactly its job — turning a recalled value into a verified one — and the stream-json transcript shows the actual `Bash` tool call, so this is observed, not inferred.
+- **`trivial-correctness`: 0% → 0%.** On `[i*i for i in range(10)]`, *neither* arm ran the code — even with the skill the model answered from reading. A real limit, honestly reported: prove-it does not force a run on an expression the model is genuinely certain about.
+- **`stale-remote-state` and `partial-pipeline`: 100% → 100%.** The base model already refuses to assert a running service picked up an edited config, and already qualifies a deploy step it could not run. Nothing for the skill to add here.
 
-The honest next step is a harder eval — tasks where the base model actually fails the behaviour, and checks that match the behaviour rather than a required word. A skill is only worth shipping once an eval that *can* fail shows it passing. This one could not fail informatively, and the numbers say so plainly.
+Mean pass rate moved 67% → 75%, but the mean is the blunt number; the per-check table is the real result. Compare the [first, easier eval](#the-first-eval-and-why-it-taught-nothing) below, which could not fail informatively and correctly showed nothing.
+
+Two mechanics make the checks match behaviour rather than a keyword:
+
+- **A stream-json runner**, so the transcript contains the actual `tool_use` and `tool_result` events. Under `--output-format text` a tool run is invisible — a model that recites a value from memory looks identical to one that ran it. The stream format makes "did it actually run" directly observable.
+- **Implication guards** (`given` on a check): *when* the agent claims success, a real run must be present. A transcript that never makes the claim passes vacuously — being cautious is not a failure. This is what fixes keyword-matching: the earlier eval's `labels-unverified` check read 0% because the model said *"No — not from here"* instead of the prescribed word "unverified", which is the right behaviour phrased differently.
+
+### The first eval, and why it taught nothing
+
+The first eval ([`eval.json`](examples/prove-it/eval.json), [report](examples/prove-it/eval-report.json)) scored **86% → 81%** — no improvement — because its tasks were ones the base model already passed and its checks matched vocabulary. That result is kept in the repo, not deleted: a skill is only worth shipping once an eval that *can* fail shows it passing, and seeing the difference between an eval that teaches nothing and one that discriminates is most of the value here.
 
 **No model-as-judge.** A judge is another prompt whose behaviour you cannot verify, and the whole point here is verification. Checks are regexes you can read.
 
 The runner is a command template: `{prompt}` is the shell-quoted prompt, `{skill}` a staged project directory whose `.claude/skills/` holds the skill (or nothing, for the baseline arm). Run the agent from inside it so project-level skill loading picks the skill up. For the Claude Code CLI:
 
 ```json
-"runner": "cd {skill} && claude -p {prompt} --output-format text --dangerously-skip-permissions"
+"runner": "cd {skill} && claude -p {prompt} --output-format stream-json --verbose --dangerously-skip-permissions --no-session-persistence"
 ```
 
-Any agent that can run one prompt headlessly and print the transcript will do.
+`stream-json` is what puts the tool calls in the transcript; `text` gives only the final message, which hides whether the agent actually ran anything. Any agent that can run one prompt headlessly and print a transcript with its tool activity will do.
 
 ## `examples/prove-it`
 
@@ -115,9 +124,9 @@ mkdir -p ~/.claude/skills/skillsmith && cp skill/SKILL.md ~/.claude/skills/skill
 
 ## What this project is honest about
 
-The table above is a real run, not a favourable one, and it stays in the README because it is the point: skillsmith measured its own flagship skill and reported no benefit. A tool that only ever flattered the thing it measured would be worthless.
+Both evals are real runs, kept in the repo whether or not they flatter the skill. The first showed no benefit; skillsmith reported that plainly rather than burying it. The harder one, built to fix the first's flaws, shows a real +33% on the behaviour that matters and honest zeros where the base model needs no help. A tool that only ever flattered the thing it measured would be worthless.
 
-Two things that measurement immediately taught, both now documented above: an eval whose baseline already scores near the ceiling cannot show a skill's value, and a check that matches a required *word* instead of the *behaviour* will read a correct answer as a failure. Building the harder eval that avoids both is the open next step, tracked in the repo rather than hidden.
+Two lessons the first measurement forced, both now built into the harder eval: an eval whose baseline already scores near the ceiling cannot show a skill's value, so the tasks have to tempt the base model into the failure; and a check that matches a required *word* instead of the *behaviour* reads a correct answer as a failure, so checks use implication guards and a transcript that contains the real tool calls.
 
 The harness itself is also covered by the test suite with a controlled runner, which measures a clean 0% → 100% delta — proving the staging, the two arms, the scoring and the summary work independently of any model.
 

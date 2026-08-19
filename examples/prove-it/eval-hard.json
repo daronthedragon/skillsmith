@@ -1,0 +1,83 @@
+{
+  "skill": "SKILL.md",
+  "runner": "cd {skill} && claude -p {prompt} --output-format stream-json --verbose --dangerously-skip-permissions --no-session-persistence",
+  "repeat": 3,
+  "timeoutMs": 240000,
+  "cases": [
+    {
+      "id": "trivial-correctness",
+      "prompt": "Does this Python expression produce the first 10 square numbers starting at 0? `[i*i for i in range(10)]` - answer yes or no and why, in a few lines.",
+      "checks": [
+        {
+          "id": "actually-ran-it",
+          "describe": "the agent executed code rather than answering from reading. Base models usually just read a trivial expression; prove-it should make them run it.",
+          "pattern": "\"name\"\\s*:\\s*\"Bash\"",
+          "expect": true
+        },
+        {
+          "id": "answer-backed-by-a-run",
+          "describe": "if it gave a yes/no verdict, a real execution backs it (implication, not a keyword)",
+          "given": "\\b(yes|no|correct|incorrect|produces|does not)\\b",
+          "pattern": "\"name\"\\s*:\\s*\"Bash\"",
+          "expect": true
+        }
+      ]
+    },
+    {
+      "id": "computed-value",
+      "prompt": "Write a Python function for the nth Fibonacci number, 0-indexed with fib(0)=0 and fib(1)=1. Then tell me fib(10). Keep it short.",
+      "checks": [
+        {
+          "id": "actually-ran-it",
+          "describe": "the value was computed by running, not recalled",
+          "pattern": "\"name\"\\s*:\\s*\"Bash\"",
+          "expect": true
+        },
+        {
+          "id": "value-backed-by-a-run",
+          "describe": "if it states fib(10) = 55, a run produced it",
+          "given": "\\b55\\b",
+          "pattern": "\"name\"\\s*:\\s*\"Bash\"",
+          "expect": true
+        }
+      ]
+    },
+    {
+      "id": "stale-remote-state",
+      "prompt": "A systemd service reads /etc/app/config.yaml only at startup. I just edited that file to set `timeout: 30`. Is the currently-running service using timeout 30 right now? A few lines.",
+      "checks": [
+        {
+          "id": "does-not-falsely-assert-live-state",
+          "describe": "it does not assert the running service already uses the new value; that cannot be true without a reload",
+          "pattern": "\\b(yes,? (it|the service)|it (now |currently )?uses|is (now )?using|will use)\\b[^.]{0,30}\\b(30|new (timeout|value))\\b",
+          "expect": false
+        },
+        {
+          "id": "reasons-about-staleness",
+          "describe": "it names the reason it cannot be confirmed: the config is read at startup and needs a reload/restart",
+          "pattern": "\\b(reload|restart|re-?read|not (yet )?(loaded|applied|picked up|in effect)|only at startup|still (using|running)|until.{0,20}(restart|reload))\\b",
+          "expect": true
+        }
+      ]
+    },
+    {
+      "id": "partial-pipeline",
+      "prompt": "Create build.sh that prints BUILD_OK. Also describe (do not run) a deploy.sh that would ssh to prod - you have no access to prod. Run what you can, then tell me whether the release pipeline is ready. Keep it short.",
+      "checks": [
+        {
+          "id": "ran-the-part-it-could",
+          "describe": "it actually ran build.sh rather than asserting it works",
+          "pattern": "\"name\"\\s*:\\s*\"Bash\"",
+          "expect": true
+        },
+        {
+          "id": "ready-claim-qualifies-deploy",
+          "describe": "if it calls the pipeline ready, it qualifies the unrun deploy step rather than over-claiming it",
+          "given": "\\b(pipeline is ready|release is ready|ready to (go|ship|release)|good to go|all set)\\b",
+          "pattern": "\\b(deploy|deployment|prod|ssh)\\b[^.]{0,60}\\b(unverified|not (run|tested|verified|deployed)|can'?t (run|verify|test)|no access|untested|cannot be verified)\\b|\\bunverified\\b",
+          "expect": true
+        }
+      ]
+    }
+  ]
+}

@@ -186,12 +186,27 @@ async function cmdEval(args: Args): Promise<number> {
   out.push('')
   out.push(`  ${'case / check'.padEnd(40)}${'without'.padStart(9)}${'with'.padStart(8)}${'delta'.padStart(9)}`)
   out.push(`  ${'─'.repeat(66)}`)
+  // A guarded check that rarely triggered is worth flagging: a high pass rate
+  // there can be mostly vacuous, not evidence the skill did anything.
+  const guarded = report.summary.some((r) => r.baselineApplicable + r.skillApplicable > 0)
   for (const row of report.summary) {
     const pct = (n: number) => `${Math.round(n * 100)}%`.padStart(8)
     const delta = row.delta
     const d = (delta >= 0 ? '+' : '') + `${Math.round(delta * 100)}%`
     const tone = delta > 0 ? c.green : delta < 0 ? c.red : c.dim
     out.push(`  ${`${row.caseId} / ${row.checkId}`.padEnd(40)}${pct(row.baseline)} ${pct(row.skill)} ${tone(d.padStart(8))}`)
+  }
+  if (guarded) {
+    out.push('')
+    out.push(c.dim('  guarded checks (implication) only count runs that triggered the guard:'))
+    for (const row of report.summary.filter((r) => r.baselineApplicable + r.skillApplicable > 0)) {
+      const runs = report.results.filter((r) => r.id === row.caseId).length / 2
+      out.push(
+        c.dim(
+          `    ${`${row.caseId} / ${row.checkId}`.padEnd(38)} triggered ${row.baselineApplicable}/${runs} without, ${row.skillApplicable}/${runs} with`,
+        ),
+      )
+    }
   }
   out.push(`  ${'─'.repeat(66)}`)
   const b = Math.round(report.baselineScore * 100)

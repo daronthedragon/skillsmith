@@ -198,6 +198,31 @@ test('scaffolded eval is valid JSON with loud placeholders', () => {
 
 // --------------------------------------------------------------------- eval
 
+test('an implication guard makes a check vacuously pass when the trigger is absent', () => {
+  // "when you claim success, a run must be present"
+  const check = {
+    id: 'backed',
+    describe: '',
+    given: '\\b(works|correct)\\b',
+    pattern: '"name":"Bash"',
+    expect: true,
+  }
+  // No claim of success at all -> vacuously satisfied, not applicable.
+  const quiet = scoreTranscript('I wrote the function.', [check])[0]!
+  assert.equal(quiet.passed, true)
+  assert.equal(quiet.applicable, false)
+
+  // Claims success but shows no run -> the guard bites and it fails.
+  const unbacked = scoreTranscript('This works, done.', [check])[0]!
+  assert.equal(unbacked.applicable, true)
+  assert.equal(unbacked.passed, false)
+
+  // Claims success and a run is present -> passes.
+  const backed = scoreTranscript('This works. {"name":"Bash"}', [check])[0]!
+  assert.equal(backed.applicable, true)
+  assert.equal(backed.passed, true)
+})
+
 test('scoreTranscript honours expect, min and max', () => {
   const t = 'ran npm test\nran npm test\nshould work'
   const r = scoreTranscript(t, [

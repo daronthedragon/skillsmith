@@ -23,6 +23,15 @@ export interface Check {
   /** Optional: pass only if the match count satisfies this. */
   max?: number
   min?: number
+  /**
+   * Implication guard. When set, the check only bites if `given` matches the
+   * transcript, so it reads as "WHEN the agent does X, it must also do Y" -
+   * e.g. when it claims success, a real run must be present. A transcript that
+   * never triggers the guard passes vacuously: not over-claiming is not a
+   * failure. This is what lets checks match a behaviour rather than a keyword.
+   */
+  given?: string
+  givenFlags?: string
 }
 
 export interface EvalCase {
@@ -53,7 +62,7 @@ export interface CaseResult {
   arm: 'baseline' | 'skill'
   run: number
   transcript: string
-  checks: Array<{ id: string; passed: boolean; matches: number }>
+  checks: Array<{ id: string; passed: boolean; matches: number; applicable?: boolean }>
   exitCode: number
 }
 
@@ -61,7 +70,16 @@ export interface EvalReport {
   spec: EvalSpec
   results: CaseResult[]
   /** Per check: pass rate without the skill vs with it. */
-  summary: Array<{ caseId: string; checkId: string; baseline: number; skill: number; delta: number }>
+  summary: Array<{
+    caseId: string
+    checkId: string
+    baseline: number
+    skill: number
+    delta: number
+    /** How many runs per arm actually triggered the check's guard. */
+    baselineApplicable: number
+    skillApplicable: number
+  }>
   /** Mean pass rate across all checks, both arms. */
   baselineScore: number
   skillScore: number
@@ -115,6 +133,13 @@ export function runCommand(command: string, timeoutMs: number): Promise<{ stdout
 
 export function scoreTranscript(transcript: string, checks: Check[]): CaseResult['checks'] {
   return checks.map((check) => {
+    // Implication guard: if the trigger is absent, the requirement does not
+    // apply and the check passes vacuously.
+    if (check.given !== undefined) {
+      const guard = new RegExp(check.given, check.givenFlags ?? 'gi')
+      if (!guard.test(transcript)) return { id: check.id, passed: true, matches: 0, applicable: false }
+    }
+
     const re = new RegExp(check.pattern, check.flags ?? 'gi')
     const matches = (transcript.match(re) ?? []).length
     let passed: boolean
@@ -125,7 +150,7 @@ export function scoreTranscript(transcript: string, checks: Check[]): CaseResult
     } else {
       passed = check.max !== undefined ? matches <= check.max : matches === 0
     }
-    return { id: check.id, passed, matches }
+    return { id: check.id, passed, matches, applicable: true }
   })
 }
 
@@ -196,9 +221,21 @@ export async function runEval(
         const passed = rows.filter((r) => r.checks.find((c) => c.id === check.id)?.passed).length
         return passed / rows.length
       }
+      const applicable = (arm: 'baseline' | 'skill') =>
+        results
+          .filter((r) => r.id === testCase.id && r.arm === arm)
+          .filter((r) => r.checks.find((c) => c.id === check.id)?.applicable !== false).length
       const baseline = rate('baseline')
       const skill = rate('skill')
-      summary.push({ caseId: testCase.id, checkId: check.id, baseline, skill, delta: skill - baseline })
+      summary.push({
+        caseId: testCase.id,
+        checkId: check.id,
+        baseline,
+        skill,
+        delta: skill - baseline,
+        baselineApplicable: applicable('baseline'),
+        skillApplicable: applicable('skill'),
+      })
     }
   }
 
