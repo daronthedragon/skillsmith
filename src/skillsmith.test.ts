@@ -823,6 +823,51 @@ test('the CLI honours its exit-code and rendering contracts', async () => {
   const badRender = run(['eval', 'package.json', '--render'])
   assert.equal(badRender.code, 1)
   assert.match(badRender.out, /not a skillsmith eval report/)
+
+  // --failures prints the transcript of a failing skill-arm run. A percentage
+  // says a check failed; only the text says whether the skill or the check is
+  // at fault, and every real failure in this project's evals needed it.
+  const dir = await mkdtemp(join(tmpdir(), 'skillsmith-test-'))
+  try {
+    const mk = (arm: 'baseline' | 'skill', passed: boolean, run_: number) => ({
+      id: 'c',
+      arm,
+      run: run_,
+      transcript: passed ? 'the good answer' : 'DISTINCTIVE-BAD-TEXT here',
+      checks: [{ id: 'k', passed, matches: 0 }],
+      exitCode: 0,
+      tokens: null,
+    })
+    const report = {
+      spec: { cases: [{ id: 'c', prompt: 'p', checks: [{ id: 'k', describe: '', pattern: 'x', expect: true }] }] },
+      results: [mk('baseline', true, 1), mk('baseline', true, 2), mk('skill', false, 1), mk('skill', true, 2)],
+      summary: [{ caseId: 'c', checkId: 'k', baseline: 1, skill: 0.5, delta: -0.5, baselineApplicable: 2, skillApplicable: 2 }],
+      baselineScore: 1,
+      skillScore: 0.5,
+      significance: {
+        significant: false,
+        delta: -0.5,
+        p: 1,
+        baseline: { point: 1, low: 0.34, high: 1 },
+        skill: { point: 0.5, low: 0.09, high: 0.91 },
+        total: 2,
+      },
+      cost: { baselineMedian: null, skillMedian: null, delta: null },
+      metrics: [],
+    }
+    const path = join(dir, 'report.json')
+    await writeFile(path, JSON.stringify(report), 'utf8')
+
+    const quiet = run(['eval', path, '--render'])
+    assert.doesNotMatch(quiet.out, /DISTINCTIVE-BAD-TEXT/, 'transcripts stay hidden without the flag')
+
+    const loud = run(['eval', path, '--render', '--failures'])
+    assert.match(loud.out, /DISTINCTIVE-BAD-TEXT/, 'the failing run is shown')
+    assert.match(loud.out, /failed: k/, 'and names the check it failed')
+    assert.doesNotMatch(loud.out, /the good answer/, 'passing runs are not dumped')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('the scaffold round-trips through the parser', async () => {

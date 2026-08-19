@@ -22,6 +22,9 @@ const c = {
   magenta: (t: string) => paint('35', t),
 }
 
+/** How many failing transcripts --failures prints before summarising the rest. */
+const FAILURE_LIMIT = 8
+
 const USAGE = `
   skillsmith — build agent skills that demonstrably change behaviour
 
@@ -38,6 +41,7 @@ const USAGE = `
     --render                  (eval) Re-render a saved report, spending no calls
     --min-reduction <pct>     (eval) Fail unless the metric shrank at least this much
     --min-pass <pct>          (eval) Fail unless the skill arm's pass rate is at least this
+    --failures                (eval) Print the transcripts of runs that failed a check
     --metric <name>           (eval) Which metric the gate reads (default "response length")
     --summary "<text>"        (new) One line on what the skill does
     --dir <path>              (new) Where to create it          (default ./<name>)
@@ -213,7 +217,7 @@ async function cmdEval(args: Args): Promise<number> {
     if (!Array.isArray(report.summary) || !report.significance) {
       throw new Error(`${specPath} is not a skillsmith eval report (run \`eval ... --json\` to produce one).`)
     }
-    const rendered = renderEvalReport(report)
+    const rendered = renderEvalReport(report, args.flags.has('failures'))
     process.stdout.write(rendered.text)
     if (gate) {
       const g = gateReport(report, gate)
@@ -270,7 +274,7 @@ async function cmdEval(args: Args): Promise<number> {
     return gate ? (gateReport(report, gate).ok ? 0 : 1) : 0
   }
 
-  const rendered = renderEvalReport(report)
+  const rendered = renderEvalReport(report, args.flags.has('failures'))
   process.stdout.write(rendered.text)
   if (gate) {
     const g = gateReport(report, gate)
@@ -282,9 +286,13 @@ async function cmdEval(args: Args): Promise<number> {
 
 /** Render an eval report as the terminal output. Shared by a live run and by
  * `--render`, which re-renders a saved report without spending a single call. */
-function renderEvalReport(report: EvalReport): { text: string; exitCode: number } {
+function renderEvalReport(report: EvalReport, showFailures = false): { text: string; exitCode: number } {
   const out: string[] = ['']
-  out.push(`  ${c.bold(c.magenta('skillsmith eval'))}  ${c.dim(basename(report.spec.skill))}`)
+  // A spec can legitimately carry no `skill` - an output-style eval names a
+  // style file instead - and basename(undefined) throws, taking the whole
+  // render down over a heading.
+  const subject = report.spec.skill ?? report.spec.outputStyle?.file ?? report.spec.outputStyle?.name
+  out.push(`  ${c.bold(c.magenta('skillsmith eval'))}  ${c.dim(subject ? basename(subject) : 'eval')}`)
   out.push('')
   out.push(`  ${'case / check'.padEnd(40)}${'without'.padStart(9)}${'with'.padStart(8)}${'delta'.padStart(9)}`)
   out.push(`  ${'─'.repeat(66)}`)
@@ -346,7 +354,9 @@ function renderEvalReport(report: EvalReport): { text: string; exitCode: number 
     ),
   )
 
-  if (report.cost.baselineMedian !== null && report.cost.skillMedian !== null) {
+  // `cost` is absent entirely on a report from a runner that reports no usage,
+  // so reach through it optionally rather than assuming the object is there.
+  if (report.cost?.baselineMedian != null && report.cost?.skillMedian != null) {
     const d = report.cost.delta ?? 0
     const sign = d >= 0 ? '+' : ''
     const tone = d > report.cost.baselineMedian * 0.5 ? c.yellow : c.dim
@@ -377,6 +387,33 @@ function renderEvalReport(report: EvalReport): { text: string; exitCode: number 
         `${Math.round(cmp.medianSkill).toLocaleString()} ${m.unit} median  ` +
         `${pctDelta}  ${verdict}`,
     )
+  }
+
+  // A percentage tells you a check failed; only the transcript tells you why -
+  // and the answer is often that the check is wrong rather than the skill. Every
+  // real failure in this project's own evals turned out to need this text, so it
+  // is one flag away instead of a hand-written script over the JSON.
+  if (showFailures) {
+    const failed = report.results.filter(
+      (r) => r.arm === 'skill' && r.checks.some((k) => k.passed === false && k.applicable !== false),
+    )
+    out.push('')
+    if (failed.length === 0) {
+      out.push(c.dim('  no failing runs in the skill arm.'))
+    } else {
+      out.push(c.bold(`  ${failed.length} failing run(s) in the skill arm:`))
+      for (const r of failed.slice(0, FAILURE_LIMIT)) {
+        const which = r.checks.filter((k) => !k.passed && k.applicable !== false).map((k) => k.id).join(', ')
+        const body = r.transcript.trim().replace(/\s+/g, ' ')
+        out.push('')
+        out.push(`  ${c.red(r.id)} run ${r.run}  ${c.dim(`failed: ${which}`)}`)
+        out.push(`    ${body.slice(0, 300)}${body.length > 300 ? c.dim(' …') : ''}`)
+      }
+      if (failed.length > FAILURE_LIMIT) {
+        out.push('')
+        out.push(c.dim(`  … and ${failed.length - FAILURE_LIMIT} more (all of them are in --json).`))
+      }
+    }
   }
 
   out.push('')
