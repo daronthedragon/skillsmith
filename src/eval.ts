@@ -83,7 +83,11 @@ export function shellQuote(text: string): string {
 
 export function runCommand(command: string, timeoutMs: number): Promise<{ stdout: string; code: number }> {
   return new Promise((resolve) => {
-    const child = spawn(command, { shell: true })
+    // stdin is ignored, i.e. closed: the child sees EOF immediately, so a CLI
+    // that would otherwise wait on stdin proceeds at once. This replaces a
+    // `< /dev/null` redirect in the command, which breaks under cmd.exe where
+    // the path is NUL, not /dev/null.
+    const child = spawn(command, { shell: true, stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
     let done = false
     const timer = setTimeout(() => {

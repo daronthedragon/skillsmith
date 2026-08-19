@@ -72,26 +72,29 @@ The linter quotes code blocks and quoted phrases out before scanning, so a skill
 
 Lint tells you a skill *could* work. Only running it tells you it *does*.
 
-`eval.json` pairs prompts with checks expressed as regexes over the transcript — things that should appear when the skill is active, things that should disappear. skillsmith runs every prompt twice, once with an empty skills directory and once with the skill staged, through whatever runner you configure, and reports pass rates for each arm:
+`eval.json` pairs prompts with checks expressed as regexes over the transcript — things that should appear when the skill is active, things that should disappear. skillsmith runs every prompt twice, once with an empty skills directory and once with the skill staged, through whatever runner you configure, and reports pass rates for each arm.
 
-```
-  case / check                               without    with    delta
-  ──────────────────────────────────────────────────────────────────
-  fix-off-by-one / shows-a-command               33%    100%     +67%
-  fix-off-by-one / no-should-work                 0%    100%    +100%
-  unrunnable-claim / labels-unverified            0%     67%     +67%
-  ──────────────────────────────────────────────────────────────────
-  the skill changed behaviour: 11% → 89%
-```
+Here is a real run of `examples/prove-it` against `claude -p` (Claude Code 2.1.235), 3 repeats per case, all 18 runs exited 0. The full report is committed at [`examples/prove-it/eval-report.json`](examples/prove-it/eval-report.json).
 
-*Illustrative table showing the format. Run `skillsmith eval` against your own runner for real numbers — and see the honesty note below.*
+<p align="center">
+  <img src="assets/eval-real.svg" width="620"
+       alt="skillsmith eval output for the prove-it skill: baseline 86 percent, with-skill 81 percent, no measurable change, across seven checks in three cases">
+</p>
+
+Mean pass rate was **86% without the skill, 81% with it** — no measurable improvement. **The skill did not help on this eval, and skillsmith said so.** That is the tool working, not failing — and the transcripts show it is a flaw in the *eval*, not a verdict on the skill:
+
+- **The base model already scores 86%.** Without any skill it already runs commands, shows output, and reasons carefully. You cannot measure a skill's value on tasks the model already passes; the ceiling is already hit.
+- **`labels-unverified` is 0% in *both* arms because the check is too literal.** Asked about an un-runnable command, the model says *"Does it work? No — not from here"* — exactly the desired behaviour — but never types the prescribed word "unverified". The check keyword-matches vocabulary instead of behaviour. That brittleness is the lesson.
+- **The −33% is one run out of nine** tripping a regex: noise at three repeats.
+
+The honest next step is a harder eval — tasks where the base model actually fails the behaviour, and checks that match the behaviour rather than a required word. A skill is only worth shipping once an eval that *can* fail shows it passing. This one could not fail informatively, and the numbers say so plainly.
 
 **No model-as-judge.** A judge is another prompt whose behaviour you cannot verify, and the whole point here is verification. Checks are regexes you can read.
 
 The runner is a command template: `{prompt}` is the shell-quoted prompt, `{skill}` a staged project directory whose `.claude/skills/` holds the skill (or nothing, for the baseline arm). Run the agent from inside it so project-level skill loading picks the skill up. For the Claude Code CLI:
 
 ```json
-"runner": "cd {skill} && claude -p {prompt} --output-format text --dangerously-skip-permissions < /dev/null"
+"runner": "cd {skill} && claude -p {prompt} --output-format text --dangerously-skip-permissions"
 ```
 
 Any agent that can run one prompt headlessly and print the transcript will do.
@@ -110,9 +113,13 @@ It exists because of a real afternoon: an agent declared a repo's contributor li
 mkdir -p ~/.claude/skills/skillsmith && cp skill/SKILL.md ~/.claude/skills/skillsmith/
 ```
 
-## An honesty note
+## What this project is honest about
 
-The eval harness is verified end to end by the test suite using a controlled runner that obeys the staged skill — it measures a 0% → 100% delta, proving the staging, the two arms, the scoring and the summary all work. It has **not** been run against a live model in this repository, because the machine it was built on had no headless agent CLI on PATH. The table above is therefore labelled illustrative. The first real eval you run is the real result, and skillsmith will print it whether or not it flatters the skill.
+The table above is a real run, not a favourable one, and it stays in the README because it is the point: skillsmith measured its own flagship skill and reported no benefit. A tool that only ever flattered the thing it measured would be worthless.
+
+Two things that measurement immediately taught, both now documented above: an eval whose baseline already scores near the ceiling cannot show a skill's value, and a check that matches a required *word* instead of the *behaviour* will read a correct answer as a failure. Building the harder eval that avoids both is the open next step, tracked in the repo rather than hidden.
+
+The harness itself is also covered by the test suite with a controlled runner, which measures a clean 0% → 100% delta — proving the staging, the two arms, the scoring and the summary work independently of any model.
 
 ## Development
 

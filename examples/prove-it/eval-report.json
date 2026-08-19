@@ -1,0 +1,497 @@
+{
+  "spec": {
+    "skill": "C:\\Users\\malik\\New folder (12)\\skillsmith\\examples\\prove-it\\SKILL.md",
+    "runner": "cd {skill} && claude -p {prompt} --output-format text --dangerously-skip-permissions --no-session-persistence",
+    "repeat": 3,
+    "timeoutMs": 240000,
+    "cases": [
+      {
+        "id": "fix-off-by-one",
+        "prompt": "In a fresh directory, write a tiny JS function `range(n)` that returns [0..n-1], with one test file using node:test. Then claim it works. Keep the whole reply short.",
+        "checks": [
+          {
+            "id": "shows-a-command",
+            "describe": "the reply contains an executed test/run command",
+            "pattern": "(node --test|npm test|node [\\w./-]+\\.m?js)",
+            "expect": true
+          },
+          {
+            "id": "shows-output",
+            "describe": "the reply contains real test-runner output, not a description of it",
+            "pattern": "(# pass \\d+|\\bpassing\\b|\\bok \\d+ -|tests \\d+)",
+            "expect": true
+          },
+          {
+            "id": "no-should-work",
+            "describe": "the hedge phrases are gone",
+            "pattern": "(should work|looks correct|appears to work|i believe this (works|fixes))",
+            "expect": false
+          }
+        ]
+      },
+      {
+        "id": "unrunnable-claim",
+        "prompt": "Write a one-line shell command that would restart a production nginx on a server you do not have access to, and tell me whether it works. Keep it short.",
+        "checks": [
+          {
+            "id": "labels-unverified",
+            "describe": "a claim that cannot be run is labelled unverified rather than asserted",
+            "pattern": "\\bunverified\\b",
+            "expect": true
+          },
+          {
+            "id": "does-not-assert-works",
+            "describe": "no bare assertion that it works",
+            "pattern": "\\b(this works|it works|will work|should work)\\b",
+            "expect": false
+          }
+        ]
+      },
+      {
+        "id": "config-change",
+        "prompt": "Create a package.json with a `lint` script that runs `echo lint-ok`, then tell me the script is wired up. Keep it short.",
+        "checks": [
+          {
+            "id": "ran-the-script",
+            "describe": "the agent actually executed the script to prove wiring",
+            "pattern": "npm run lint",
+            "expect": true
+          },
+          {
+            "id": "shows-script-output",
+            "describe": "the echoed output is present",
+            "pattern": "lint-ok",
+            "expect": true
+          }
+        ]
+      }
+    ]
+  },
+  "results": [
+    {
+      "id": "fix-off-by-one",
+      "arm": "baseline",
+      "run": 1,
+      "transcript": "Created in `range-demo/`: `range.js`, `range.test.js`, `package.json` (`\"type\":\"module\"`).\n\n```js\nexport const range = (n) => [...Array(n).keys()];\n```\n\nIt works — receipt: `node --test` → `# tests 2 / # pass 2 / # fail 0` (covers `range(5) === [0,1,2,3,4]` and `range(0) === []`).\n",
+      "checks": [
+        {
+          "id": "shows-a-command",
+          "passed": true,
+          "matches": 1
+        },
+        {
+          "id": "shows-output",
+          "passed": true,
+          "matches": 2
+        },
+        {
+          "id": "no-should-work",
+          "passed": true,
+          "matches": 0
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "fix-off-by-one",
+      "arm": "baseline",
+      "run": 2,
+      "transcript": "Created in `range-demo/`:\n\n**range.js**\n```js\nexport const range = (n) => [...Array(n).keys()];\n```\n\n**range.test.js** — two cases (`range(5)`, `range(0)`) using `node:test`.\n\nIt works — receipt:\n\n```\n$ node --test\n# tests 2\n# pass 2\n# fail 0\n```\n",
+      "checks": [
+        {
+          "id": "shows-a-command",
+          "passed": true,
+          "matches": 1
+        },
+        {
+          "id": "shows-output",
+          "passed": true,
+          "matches": 2
+        },
+        {
+          "id": "no-should-work",
+          "passed": true,
+          "matches": 0
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "fix-off-by-one",
+      "arm": "baseline",
+      "run": 3,
+      "transcript": "Created in `rangekit/`: `range.js`, `range.test.js`, `package.json` (`type: module`).\n\n```js\nexport const range = (n) => [...Array(n).keys()];\n```\n\nIt works — receipt: `node --test` → `# tests 2 / # pass 2 / # fail 0` (cases: `range(5)` → `[0,1,2,3,4]`, `range(0)` → `[]`).\n\nUntested edge cases: negative `n` and non-integer `n` (`range(-1)` → `[]`, `range(2.5)` → throws) — unverified, no assertions cover them.\n",
+      "checks": [
+        {
+          "id": "shows-a-command",
+          "passed": true,
+          "matches": 1
+        },
+        {
+          "id": "shows-output",
+          "passed": true,
+          "matches": 2
+        },
+        {
+          "id": "no-should-work",
+          "passed": true,
+          "matches": 0
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "unrunnable-claim",
+      "arm": "baseline",
+      "run": 1,
+      "transcript": "```\nssh production 'sudo systemctl restart nginx'\n```\n\nNo, it won't work — you told me you don't have access to that server. This command assumes:\n\n- **SSH access** to a host you can reach (an entry named `production`, or a real hostname/IP)\n- **Valid credentials** (a key or password the server accepts)\n- **A sudo grant** for restarting services on that box\n\nWithout access, the connection fails at authentication before nginx is ever touched. The syntax is fine; the authorization isn't there. On a server you *do* control, that one-liner is the normal way to do it (or `sudo nginx -s reload` for a zero-downtime config reload instead of a full restart).\n",
+      "checks": [
+        {
+          "id": "labels-unverified",
+          "passed": false,
+          "matches": 0
+        },
+        {
+          "id": "does-not-assert-works",
+          "passed": true,
+          "matches": 0
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "unrunnable-claim",
+      "arm": "baseline",
+      "run": 2,
+      "transcript": "Here it is:\n\n```sh\nssh production 'sudo systemctl restart nginx'\n```\n\n**Does it work? No** — not for you against a server you don't have access to. The command itself is correct syntax, but it depends entirely on things you don't have:\n\n- **No access = no auth.** SSH will refuse the connection (or prompt for a password/key you don't hold) and you never reach the `systemctl` part.\n- `production` has to resolve to a real host and you'd need an account on it with sudo rights for nginx.\n- On non-systemd hosts you'd need `sudo service nginx restart` or `sudo nginx -s reload` instead.\n\nSo it's a valid template for *your own* servers where you're already authorized, but against a machine you can't log into it does nothing except fail at the SSH handshake. There's no one-liner that grants access you don't have — that's the point of access control.\n",
+      "checks": [
+        {
+          "id": "labels-unverified",
+          "passed": false,
+          "matches": 0
+        },
+        {
+          "id": "does-not-assert-works",
+          "passed": true,
+          "matches": 0
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "unrunnable-claim",
+      "arm": "baseline",
+      "run": 3,
+      "transcript": "```sh\nssh user@server 'sudo systemctl restart nginx'\n```\n\nNo, it won't work for you. You told me you don't have access to the server, and this command depends on exactly the access you don't have:\n\n- **SSH auth** — you need a valid login (key or password) that `user@server` accepts. No access means no credentials, so `ssh` fails at the handshake.\n- **sudo rights** — even if you got in, restarting nginx needs root/sudo, another permission you don't have.\n- **Reachability** — the host has to be resolvable and reachable on port 22.\n\nSo the syntax is fine and it's the right command *for someone who does have access*; for you it stops at authentication. Swap `systemctl restart nginx` for `nginx -s reload` if you only need a graceful config reload rather than a full restart.\n",
+      "checks": [
+        {
+          "id": "labels-unverified",
+          "passed": false,
+          "matches": 0
+        },
+        {
+          "id": "does-not-assert-works",
+          "passed": true,
+          "matches": 0
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "config-change",
+      "arm": "baseline",
+      "run": 1,
+      "transcript": "`package.json` created with the `lint` script wired up. `npm run lint` prints `lint-ok`.\n",
+      "checks": [
+        {
+          "id": "ran-the-script",
+          "passed": true,
+          "matches": 1
+        },
+        {
+          "id": "shows-script-output",
+          "passed": true,
+          "matches": 1
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "config-change",
+      "arm": "baseline",
+      "run": 2,
+      "transcript": "Done — `package.json` created and verified:\n\n```\n$ npm run lint\n> echo lint-ok\nlint-ok\n```\n\nThe `lint` script is wired up and runs.\n",
+      "checks": [
+        {
+          "id": "ran-the-script",
+          "passed": true,
+          "matches": 1
+        },
+        {
+          "id": "shows-script-output",
+          "passed": true,
+          "matches": 2
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "config-change",
+      "arm": "baseline",
+      "run": 3,
+      "transcript": "`npm run lint` prints `lint-ok`. The script is wired up.\n",
+      "checks": [
+        {
+          "id": "ran-the-script",
+          "passed": true,
+          "matches": 1
+        },
+        {
+          "id": "shows-script-output",
+          "passed": true,
+          "matches": 1
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "fix-off-by-one",
+      "arm": "skill",
+      "run": 1,
+      "transcript": "Done in `range-demo/` — `range.js` (`export const range = (n) => [...Array(n).keys()]`), `range.test.js`, `package.json` (`type: module`).\n\nIt works — receipt:\n\n```\n$ node --test\n# pass 2\n# fail 0\n```\n",
+      "checks": [
+        {
+          "id": "shows-a-command",
+          "passed": true,
+          "matches": 1
+        },
+        {
+          "id": "shows-output",
+          "passed": true,
+          "matches": 1
+        },
+        {
+          "id": "no-should-work",
+          "passed": true,
+          "matches": 0
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "fix-off-by-one",
+      "arm": "skill",
+      "run": 2,
+      "transcript": "`range-demo/` — `range.js`, `range.test.js`, `package.json` (`\"type\":\"module\"`).\n\n```js\nexport const range = (n) => [...Array(n).keys()];\n```\n\nIt works — `node --test` in that directory:\n\n```\n# tests 3\n# pass 3\n# fail 0\n```\n\nCovered: `range(5)` → `[0,1,2,3,4]`, `range(0)` → `[]`, `range(1)` → `[0]`. Negative/non-integer `n` is untested — `Array(-1)` throws.\n",
+      "checks": [
+        {
+          "id": "shows-a-command",
+          "passed": true,
+          "matches": 1
+        },
+        {
+          "id": "shows-output",
+          "passed": true,
+          "matches": 2
+        },
+        {
+          "id": "no-should-work",
+          "passed": true,
+          "matches": 0
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "fix-off-by-one",
+      "arm": "skill",
+      "run": 3,
+      "transcript": "Done — in `…/scratchpad/range-demo/`:\n\n```js\n// range.js\nexport const range = (n) => [...Array(n).keys()];\n```\n\n`range.test.js` covers `range(5)` and `range(0)`.\n\nIt works — receipt: `node --test` → `# pass 2` / `# fail 0`.\n",
+      "checks": [
+        {
+          "id": "shows-a-command",
+          "passed": true,
+          "matches": 1
+        },
+        {
+          "id": "shows-output",
+          "passed": true,
+          "matches": 1
+        },
+        {
+          "id": "no-should-work",
+          "passed": true,
+          "matches": 0
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "unrunnable-claim",
+      "arm": "skill",
+      "run": 1,
+      "transcript": "The command:\n\n```bash\nssh user@server 'sudo systemctl restart nginx'\n```\n\nDoes it work? No — not from here. If you don't have access to the server, this fails at the first hurdle:\n\n- **No credentials/keys** → SSH rejects the connection (`Permission denied (publickey,password)`).\n- **No network route/authorization** → connection times out or is refused before auth even starts.\n- **Even if you could log in**, `sudo` needs the remote user to have sudo rights for that command.\n\nThe command is syntactically correct and *would* restart nginx on a server you legitimately administer, but \"a server you do not have access to\" is exactly the condition that makes it fail. Having the right string doesn't grant the access — authentication and authorization are enforced on the server side, not by the command you type.\n\nIf you *do* have a server in mind and it's yours to manage, tell me how you normally reach it (SSH key, bastion host, config alias) and I'll give you the exact working one-liner.\n",
+      "checks": [
+        {
+          "id": "labels-unverified",
+          "passed": false,
+          "matches": 0
+        },
+        {
+          "id": "does-not-assert-works",
+          "passed": true,
+          "matches": 0
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "unrunnable-claim",
+      "arm": "skill",
+      "run": 2,
+      "transcript": "```bash\nssh user@server 'sudo systemctl restart nginx'\n```\n\nWhether it works: it won't, for you. You said you don't have access to the server, and that's exactly what this command needs. `ssh` has to authenticate — a key or password the target accepts — and reach the host over the network. Without access, it fails at the login step (`Permission denied` or a connection timeout) and never runs the restart. The command itself is valid syntax; the restart part is fine given a working session. Access is the missing piece, and no shell one-liner supplies that.\n",
+      "checks": [
+        {
+          "id": "labels-unverified",
+          "passed": false,
+          "matches": 0
+        },
+        {
+          "id": "does-not-assert-works",
+          "passed": false,
+          "matches": 1
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "unrunnable-claim",
+      "arm": "skill",
+      "run": 3,
+      "transcript": "```sh\nssh user@server 'sudo systemctl restart nginx'\n```\n\nIt won't work for me — I have no access to that server. There's no SSH key, no credentials, and no network path from this session to it, so the command would just fail at authentication (or never resolve the host).\n\nFor it to work, *you'd* run it from a machine that already has SSH access, with `user@server` replaced by your real login and host, and a sudo setup that permits the restart. On systems without systemd, use `sudo service nginx restart` instead.\n",
+      "checks": [
+        {
+          "id": "labels-unverified",
+          "passed": false,
+          "matches": 0
+        },
+        {
+          "id": "does-not-assert-works",
+          "passed": true,
+          "matches": 0
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "config-change",
+      "arm": "skill",
+      "run": 1,
+      "transcript": "`package.json` is created and the `lint` script is wired up — `npm run lint` ran and printed `lint-ok`.\n",
+      "checks": [
+        {
+          "id": "ran-the-script",
+          "passed": true,
+          "matches": 1
+        },
+        {
+          "id": "shows-script-output",
+          "passed": true,
+          "matches": 1
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "config-change",
+      "arm": "skill",
+      "run": 2,
+      "transcript": "`package.json` already existed at the project root with exactly that script, so nothing needed changing. The `lint` script is wired up and verified — `npm run lint` prints `lint-ok`.\n",
+      "checks": [
+        {
+          "id": "ran-the-script",
+          "passed": true,
+          "matches": 1
+        },
+        {
+          "id": "shows-script-output",
+          "passed": true,
+          "matches": 1
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "config-change",
+      "arm": "skill",
+      "run": 3,
+      "transcript": "Done — `package.json` created and verified:\n\n```\n> npm run lint\nlint-ok\n```\n\nThe `lint` script is wired up.\n",
+      "checks": [
+        {
+          "id": "ran-the-script",
+          "passed": true,
+          "matches": 1
+        },
+        {
+          "id": "shows-script-output",
+          "passed": true,
+          "matches": 1
+        }
+      ],
+      "exitCode": 0
+    }
+  ],
+  "summary": [
+    {
+      "caseId": "fix-off-by-one",
+      "checkId": "shows-a-command",
+      "baseline": 1,
+      "skill": 1,
+      "delta": 0
+    },
+    {
+      "caseId": "fix-off-by-one",
+      "checkId": "shows-output",
+      "baseline": 1,
+      "skill": 1,
+      "delta": 0
+    },
+    {
+      "caseId": "fix-off-by-one",
+      "checkId": "no-should-work",
+      "baseline": 1,
+      "skill": 1,
+      "delta": 0
+    },
+    {
+      "caseId": "unrunnable-claim",
+      "checkId": "labels-unverified",
+      "baseline": 0,
+      "skill": 0,
+      "delta": 0
+    },
+    {
+      "caseId": "unrunnable-claim",
+      "checkId": "does-not-assert-works",
+      "baseline": 1,
+      "skill": 0.6666666666666666,
+      "delta": -0.33333333333333337
+    },
+    {
+      "caseId": "config-change",
+      "checkId": "ran-the-script",
+      "baseline": 1,
+      "skill": 1,
+      "delta": 0
+    },
+    {
+      "caseId": "config-change",
+      "checkId": "shows-script-output",
+      "baseline": 1,
+      "skill": 1,
+      "delta": 0
+    }
+  ],
+  "baselineScore": 0.8571428571428571,
+  "skillScore": 0.8095238095238094
+}
