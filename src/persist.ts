@@ -28,11 +28,18 @@ export const PERSIST_SOURCE = `function buildPersistText(raw) {
     return (next ? rest.slice(0, next.index) : rest).trim();
   };
 
+  const isFence = (line) => line.indexOf("\`\`\`") === 0 || line.indexOf("~~~") === 0;
+
   // Reassemble bullets: a rule may wrap across several physical lines, and a
-  // reminder truncated mid-sentence is worse than none.
+  // reminder truncated mid-sentence is worse than none. Fenced code between a
+  // bullet and the next is skipped, not glued onto the rule. Headings are
+  // matched case-insensitively so "## rules" is not silently missed.
   const rules = [];
-  for (const rawLine of section(/^#{1,6}\\s+Rules\\s*$/m).split("\\n")) {
+  let inFence = false;
+  for (const rawLine of section(/^#{1,6}\\s+Rules\\s*$/im).split("\\n")) {
     const line = rawLine.trim();
+    if (isFence(line)) { inFence = !inFence; continue; }
+    if (inFence) continue;
     if (line.indexOf("- ") === 0) {
       rules.push(line.slice(2).trim());
     } else if (line.length > 0 && rules.length > 0) {
@@ -42,8 +49,9 @@ export const PERSIST_SOURCE = `function buildPersistText(raw) {
 
   // The effect's first paragraph, joined across its wrapped lines.
   const effectLines = [];
-  for (const rawLine of section(/^#{1,6}\\s+Observable effect\\b.*$/m).split("\\n")) {
+  for (const rawLine of section(/^#{1,6}\\s+Observable effect\\b.*$/im).split("\\n")) {
     const line = rawLine.trim();
+    if (isFence(line)) break;
     if (line.length === 0) {
       if (effectLines.length > 0) break;
     } else {

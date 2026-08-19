@@ -3,7 +3,7 @@ import test from 'node:test'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseTokens, runEval, scoreTranscript, type EvalSpec } from './eval.js'
+import { parseTokens, runEval, scoreTranscript, shellQuote, type EvalSpec } from './eval.js'
 import { ParseError, parseSkill } from './parse.js'
 import { lint, RULES } from './rules.js'
 import { scaffoldEval, scaffoldSkill } from './scaffold.js'
@@ -76,6 +76,35 @@ body`
   assert.equal(p.body.trim(), 'body')
 })
 
+test('a folded description keeps text after a blank line (paragraph 2)', () => {
+  const raw = `---
+name: x
+description: >
+  Reviews pull requests for correctness.
+
+  Use whenever the user asks to review a PR. Do NOT use for style nitpicks.
+---
+body`
+  const p = parseSkill(raw)
+  assert.match(p.frontmatter.description ?? '', /Use whenever the user asks to review a PR/)
+  assert.match(p.frontmatter.description ?? '', /Do NOT use for style nitpicks/)
+})
+
+test('a --- horizontal rule inside an indented folded value is not the frontmatter end', () => {
+  const raw = `---
+name: x
+description: >
+  Some text.
+  ---
+  More text after a rule.
+---
+# Real Body`
+  const p = parseSkill(raw)
+  assert.equal(p.frontmatter.name, 'x')
+  assert.match(p.frontmatter.description ?? '', /More text after a rule/)
+  assert.match(p.body, /# Real Body/)
+})
+
 test('splits the body into headed sections and keeps line numbers', () => {
   const p = parseSkill(GOOD)
   const headings = p.sections.map((s) => s.heading)
@@ -130,6 +159,77 @@ test('adjectives-in-a-trench-coat fails on the rules that matter', () => {
   assert.ok(ids.has('no-self-reference'), 'talks about itself')
   assert.ok(r.errors >= 2)
   assert.ok(r.score < 40, `score ${r.score}`)
+})
+
+test('a behavioural skill mentioning "generate" is not wrongly exempted from persistence', () => {
+  const raw = `---
+name: styler
+description: >
+  Ensures every response you generate follows the house style. Use whenever the
+  user is writing prose. Do NOT use for code.
+---
+# Styler
+## Procedure
+1. Read the draft.
+2. Apply the house style.
+3. Return it.
+`
+  const ids = lint(parseSkill(raw)).findings.map((f) => f.rule)
+  assert.ok(ids.includes('persistence'), '"generate" must no longer exempt a persistent skill')
+  assert.ok(ids.includes('off-switch'))
+})
+
+test('an incidental "do not use" in the body is not accepted as negative scope', () => {
+  const raw = `---
+name: x
+description: >
+  A helper. Use whenever the user asks for the thing that this does for them here.
+---
+# X
+## Procedure
+1. Do the thing.
+2. Then the next thing.
+3. Finish.
+## Rules
+- Do not use tabs for indentation in code samples.
+`
+  const ids = lint(parseSkill(raw)).findings.map((f) => f.rule)
+  assert.ok(ids.includes('negative-scope'), 'body-only "do not use" is not a scope statement')
+})
+
+test('hedges in the description are caught, not just the body', () => {
+  const raw = `---
+name: x
+description: >
+  Try to help where possible, consider the context, and generally do the right
+  thing as needed. Use whenever the user asks.
+---
+# X
+## Procedure
+1. Step one.
+2. Step two.
+3. Step three.
+`
+  const ids = lint(parseSkill(raw)).findings.map((f) => f.rule)
+  assert.ok(ids.includes('no-hedging'), 'the description is scanned for hedges')
+})
+
+test('a numbered list inside a fence is not counted as a procedure', () => {
+  const raw = `---
+name: x
+description: >
+  A thing. Use whenever the user asks for it, in the situations it applies to.
+---
+# X
+No real procedure here, just sample output:
+\`\`\`
+1. did a thing
+2. did another
+3. and a third
+\`\`\`
+`
+  const ids = lint(parseSkill(raw)).findings.map((f) => f.rule)
+  assert.ok(ids.includes('ordered-procedure'), 'fenced numbered output must not satisfy the procedure rule')
 })
 
 test('a one-shot skill is not penalised for lacking persistence or an off switch', () => {
@@ -223,17 +323,76 @@ test('an implication guard makes a check vacuously pass when the trigger is abse
   assert.equal(backed.passed, true)
 })
 
-test('parseTokens sums usage across a stream-json transcript', () => {
+test('parseTokens uses the result event as the authoritative total', () => {
+  // Claude Code echoes the same call's usage in each assistant event and again
+  // in the result event; the result carries the cumulative total. Summing every
+  // occurrence would triple-count.
   const stream = [
-    '{"type":"assistant","message":{"usage":{"input_tokens":100,"output_tokens":20}}}',
-    '{"type":"assistant","message":{"usage":{"input_tokens":50,"output_tokens":10,"cache_read_input_tokens":5}}}',
-    '{"type":"result","usage":{"input_tokens":0,"output_tokens":3}}',
+    '{"type":"assistant","message":{"usage":{"input_tokens":10,"output_tokens":5}}}',
+    '{"type":"assistant","message":{"usage":{"input_tokens":10,"output_tokens":5}}}',
+    '{"type":"result","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":100}}',
   ].join('\n')
-  assert.equal(parseTokens(stream), 100 + 20 + 50 + 10 + 5 + 0 + 3)
+  assert.equal(parseTokens(stream), 115, 'the result total, not 3x the message usage')
+})
+
+test('parseTokens does not truncate a usage object that nests other objects', () => {
+  // A regex stopping at the first "}" drops output_tokens after a nested object.
+  const line =
+    '{"type":"result","usage":{"input_tokens":10,"cache_creation":{"ephemeral_5m_input_tokens":7486},"cache_creation_input_tokens":7486,"output_tokens":300}}'
+  assert.equal(parseTokens(line), 10 + 7486 + 300)
+})
+
+test('parseTokens falls back to message usage when there is no result event', () => {
+  const stream = [
+    '{"type":"assistant","message":{"usage":{"input_tokens":40,"output_tokens":8}}}',
+  ].join('\n')
+  assert.equal(parseTokens(stream), 48)
 })
 
 test('parseTokens returns null when the transcript carries no usage', () => {
   assert.equal(parseTokens('plain text output, no json'), null)
+  assert.equal(parseTokens('{"type":"result"}'), null)
+})
+
+test('shellQuote does not bake stray carets into a Windows prompt', () => {
+  if (process.platform !== 'win32') return
+  // Inside cmd.exe double quotes, ^ and ! are literal; escaping them corrupts
+  // the prompt the model receives.
+  assert.equal(shellQuote('100% done, wow!'), '"100% done, wow!"')
+  assert.equal(shellQuote('a "quoted" bit'), '"a ""quoted"" bit"')
+})
+
+test('shellQuote rejects a newline on Windows rather than silently dropping it', () => {
+  if (process.platform !== 'win32') return
+  assert.throws(() => shellQuote('line one\nline two'), /newline/)
+})
+
+test('runEval fails fast on an invalid check regex instead of aborting mid-run', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'skillsmith-test-'))
+  try {
+    await writeFile(join(dir, 'SKILL.md'), GOOD, 'utf8')
+    const spec: EvalSpec = {
+      skill: join(dir, 'SKILL.md'),
+      runner: 'echo hi',
+      cases: [{ id: 'c', prompt: 'p', checks: [{ id: 'bad', describe: '', pattern: '(unterminated', expect: true }] }],
+    }
+    await assert.rejects(() => runEval(spec), /invalid pattern regex/i)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('runEval rejects a spec with no cases', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'skillsmith-test-'))
+  try {
+    await writeFile(join(dir, 'SKILL.md'), GOOD, 'utf8')
+    await assert.rejects(
+      () => runEval({ skill: join(dir, 'SKILL.md'), runner: 'echo hi', cases: [] }),
+      /no cases/i,
+    )
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('scoreTranscript honours expect, min and max', () => {
@@ -310,6 +469,46 @@ else console.log('Fixed, should work now. ' + prompt);
   }
 })
 
+test('a guarded check the baseline never triggers reports null, not a fake delta', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'skillsmith-test-'))
+  try {
+    await writeFile(join(dir, 'SKILL.md'), GOOD, 'utf8')
+    // The runner emits the guard trigger only in the skill arm.
+    const runner = join(dir, 'arm-runner.mjs')
+    await writeFile(
+      runner,
+      `import { readdirSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+const sk = join(process.argv[3], '.claude', 'skills');
+const hasSkill = existsSync(sk) && readdirSync(sk).some((d) => existsSync(join(sk, d, 'SKILL.md')));
+console.log(hasSkill ? 'CLAIMED and PROOF here' : 'nothing to see');
+`,
+      'utf8',
+    )
+    const spec: EvalSpec = {
+      skill: join(dir, 'SKILL.md'),
+      runner: `node ${JSON.stringify(runner)} {prompt} {skill}`,
+      repeat: 2,
+      timeoutMs: 30_000,
+      cases: [
+        {
+          id: 'guarded',
+          prompt: 'p',
+          checks: [{ id: 'g', describe: '', given: 'CLAIMED', pattern: 'PROOF', expect: true }],
+        },
+      ],
+    }
+    const report = await runEval(spec)
+    const row = report.summary.find((r) => r.checkId === 'g')!
+    assert.equal(row.baseline, null, 'baseline never triggered the guard, so it has no rate')
+    assert.equal(row.baselineApplicable, 0)
+    assert.equal(row.skill, 1, 'skill triggered and passed')
+    assert.equal(row.delta, null, 'no delta without both arms - not a fake -100%/+100%')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('runEval isolates each run in its own working directory', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'skillsmith-test-'))
   try {
@@ -362,6 +561,36 @@ test('runEval tolerates a runner that fails, and scores what it got', async () =
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+test('the CLI honours its exit-code and rendering contracts', async () => {
+  const { execFileSync } = await import('node:child_process')
+  const run = (argv: string[]): { out: string; code: number } => {
+    try {
+      const out = execFileSync(process.execPath, ['--import', 'tsx', 'src/index.ts', ...argv], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      return { out, code: 0 }
+    } catch (err) {
+      const e = err as { status?: number; stdout?: string; stderr?: string }
+      return { out: (e.stdout ?? '') + (e.stderr ?? ''), code: e.status ?? 1 }
+    }
+  }
+
+  // Help is success.
+  assert.equal(run(['--help']).code, 0)
+  assert.equal(run(['-h']).code, 0)
+  // No command is a usage error.
+  assert.equal(run([]).code, 1)
+  // Unknown command is an error naming it.
+  const unknown = run(['frobnicate'])
+  assert.equal(unknown.code, 1)
+  assert.match(unknown.out, /Unknown command/)
+  // --render on a non-report is rejected clearly, not with a raw crash.
+  const badRender = run(['eval', 'package.json', '--render'])
+  assert.equal(badRender.code, 1)
+  assert.match(badRender.out, /not a skillsmith eval report/)
 })
 
 test('the scaffold round-trips through the parser', async () => {

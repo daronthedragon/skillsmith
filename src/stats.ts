@@ -23,8 +23,9 @@ export interface Interval {
  * samples.
  */
 export function wilson(passed: number, total: number, z = Z_95): Interval {
-  if (total === 0) return { point: 0, low: 0, high: 0 }
-  const p = passed / total
+  if (!Number.isFinite(total) || total <= 0) return { point: 0, low: 0, high: 0 }
+  // Clamp to the domain rather than returning NaN on a caller's bad input.
+  const p = Math.min(1, Math.max(0, passed / total))
   const z2 = z * z
   const denom = 1 + z2 / total
   const centre = (p + z2 / (2 * total)) / denom
@@ -73,11 +74,12 @@ export function twoProportion(
   totalB: number,
   alpha = 0.05,
 ): Significance {
-  const pA = totalA ? passA / totalA : 0
-  const pB = totalB ? passB / totalB : 0
+  const clamp = (n: number) => Math.min(1, Math.max(0, n))
+  const pA = totalA > 0 ? clamp(passA / totalA) : 0
+  const pB = totalB > 0 ? clamp(passB / totalB) : 0
   const delta = pB - pA
 
-  if (totalA === 0 || totalB === 0) {
+  if (!(totalA > 0) || !(totalB > 0)) {
     return { delta, p: 1, significant: false, suggestMoreRuns: false }
   }
 

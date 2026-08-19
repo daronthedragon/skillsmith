@@ -42,14 +42,29 @@ function parseFrontmatter(lines: string[]): Record<string, string> {
     let value = (match[2] ?? '').trim()
 
     if (value === '>' || value === '|' || value === '>-' || value === '|-') {
-      // Block scalar: collect indented continuation lines.
+      // Block scalar: collect the indented continuation. A blank line inside the
+      // block is a paragraph break, not the end of the value - stopping at the
+      // first blank line silently dropped everything after it.
       const collected: string[] = []
+      const fold = value.startsWith('>')
       i++
-      while (i < lines.length && /^\s+\S/.test(lines[i] as string)) {
-        collected.push((lines[i] as string).trim())
+      while (i < lines.length) {
+        const l = lines[i] as string
+        if (l.trim() === '') {
+          // Preserve a paragraph break; skip leading blanks.
+          if (collected.length > 0) collected.push('')
+          i++
+          continue
+        }
+        if (!/^\s/.test(l)) break // a non-indented line ends the block
+        collected.push(l.trim())
         i++
       }
-      value = collected.join(value.startsWith('>') ? ' ' : '\n')
+      while (collected.length > 0 && collected[collected.length - 1] === '') collected.pop()
+      // Folded blocks join lines with spaces and paragraphs with a newline.
+      value = fold
+        ? collected.map((l) => (l === '' ? '\n' : l)).join(' ').replace(/ ?\n ?/g, '\n')
+        : collected.join('\n')
       out[key] = value
       continue
     }
@@ -69,7 +84,10 @@ export function parseSkill(raw: string): ParsedSkill {
   if (lines[0]?.trim() !== '---') {
     throw new ParseError('SKILL.md must begin with a `---` frontmatter block on line 1')
   }
-  const end = lines.findIndex((l, idx) => idx > 0 && l.trim() === '---')
+  // The closing fence is `---` at column 0 (trailing space allowed). Requiring
+  // column 0 stops a `---` horizontal rule inside an indented folded value from
+  // being mistaken for the end of the frontmatter.
+  const end = lines.findIndex((l, idx) => idx > 0 && /^---\s*$/.test(l))
   if (end === -1) throw new ParseError('Frontmatter opened with `---` but never closed')
 
   const frontmatter = parseFrontmatter(lines.slice(1, end))
@@ -81,7 +99,7 @@ export function parseSkill(raw: string): ParsedSkill {
   let inFence = false
 
   bodyLines.forEach((line, idx) => {
-    if (/^\s*```/.test(line)) inFence = !inFence
+    if (/^\s*(```|~~~)/.test(line)) inFence = !inFence
     const h = !inFence && /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line)
     if (h) {
       sections.push(current)

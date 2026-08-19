@@ -69,6 +69,45 @@ test('buildPersistText tolerates CRLF', () => {
   assert.match(out, /- Never write "should work"\./)
 })
 
+test('buildPersistText matches headings case-insensitively', () => {
+  const lower = '---\nname: x\n---\n## rules\n\n- Alpha rule.\n\n## observable effect\n\nThe effect.\n'
+  const out = buildPersistText(lower)
+  assert.match(out, /- Alpha rule\./, 'lowercase ## rules must still be found')
+  assert.match(out, /Done means: The effect\./)
+})
+
+test('buildPersistText skips a fenced block between bullets instead of gluing it on', () => {
+  const withFence =
+    '---\nname: x\n---\n## Rules\n\n- Real rule.\n```\n- fake bullet in a fence\n```\n- Second rule.\n'
+  const out = buildPersistText(withFence)
+  assert.match(out, /- Real rule\./)
+  assert.match(out, /- Second rule\./)
+  assert.ok(!out.includes('fake bullet'), 'fenced content must not become part of a rule')
+})
+
+test('a path with an apostrophe produces a runnable script, not a SyntaxError', async () => {
+  const dir = await mkdtemp(join(tmpdir(), "skillsmith-O'Brien-"))
+  try {
+    const skillMd = join(dir, 'SKILL.md')
+    await writeFile(skillMd, SKILL, 'utf8')
+    const scriptPath = join(dir, 'persist.mjs')
+    await writeFile(scriptPath, generateHookScript(skillMd), 'utf8')
+    // Must not throw a SyntaxError; must emit the reminder.
+    const printed = execFileSync('node', [scriptPath], { encoding: 'utf8' })
+    assert.match(printed, /is active this turn/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('mergeHook refuses a non-object hooks value instead of silently writing nothing', () => {
+  assert.throws(() => mergeHook({ hooks: [] as unknown as Record<string, never> }, '/x/persist.mjs'), /not an object/)
+  assert.throws(
+    () => mergeHook({ hooks: { UserPromptSubmit: 'nope' as unknown as [] } }, '/x/persist.mjs'),
+    /not an array/,
+  )
+})
+
 // ------------------------------------------------------------- generated script
 
 test('the generated hook script produces exactly what buildPersistText does', async () => {
@@ -168,6 +207,45 @@ test('installHook writes the runtime and wires settings, removeHook reverses it'
     const cleaned = JSON.parse(await readFile(settingsPath, 'utf8'))
     assert.equal(cleaned.hooks.UserPromptSubmit.length, 0)
     assert.equal(cleaned.includeCoAuthoredBy, false)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('installHook accepts a BOM-prefixed settings.json (PowerShell default)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'skillsmith-hook-'))
+  try {
+    const skillDir = join(dir, 'prove-it')
+    const { mkdir } = await import('node:fs/promises')
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(join(skillDir, 'SKILL.md'), SKILL, 'utf8')
+    const settingsPath = join(dir, 'settings.json')
+    await writeFile(settingsPath, '﻿' + JSON.stringify({ theme: 'dark' }), 'utf8')
+
+    const r = await installHook({ skillDir, settingsPath })
+    assert.equal(r.added, true)
+    const settings = JSON.parse(await readFile(settingsPath, 'utf8'))
+    assert.equal(settings.theme, 'dark')
+    assert.equal(settings.hooks.UserPromptSubmit.length, 1)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('a bad settings.json aborts install before any persist.mjs is written', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'skillsmith-hook-'))
+  try {
+    const skillDir = join(dir, 'prove-it')
+    const { mkdir } = await import('node:fs/promises')
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(join(skillDir, 'SKILL.md'), SKILL, 'utf8')
+    const settingsPath = join(dir, 'settings.json')
+    await writeFile(settingsPath, '{ this is not json', 'utf8')
+
+    await assert.rejects(() => installHook({ skillDir, settingsPath }), /not valid JSON/)
+    // No stray runtime script left behind.
+    const { access } = await import('node:fs/promises')
+    await assert.rejects(() => access(join(skillDir, 'persist.mjs')), 'persist.mjs must not exist after a failed install')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

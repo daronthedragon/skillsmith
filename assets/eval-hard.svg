@@ -1,27 +1,36 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="676" height="446" viewBox="0 0 676 446" font-family="ui-monospace,SFMono-Regular,&quot;SF Mono&quot;,Menlo,Consolas,&quot;DejaVu Sans Mono&quot;,monospace" font-size="13.5" role="img">
-<title>skillsmith eval — with significance testing</title>
-<rect width="676" height="446" rx="10" fill="#0d1117" stroke="#30363d"/>
-<path d="M0 10a10 10 0 0 1 10-10h656a10 10 0 0 1 10 10v26H0z" fill="#161b22"/>
-<line x1="0" y1="36" x2="676" y2="36" stroke="#30363d"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="782" height="662" viewBox="0 0 782 662" font-family="ui-monospace,SFMono-Regular,&quot;SF Mono&quot;,Menlo,Consolas,&quot;DejaVu Sans Mono&quot;,monospace" font-size="13.5" role="img">
+<title>skillsmith eval --render</title>
+<rect width="782" height="662" rx="10" fill="#0d1117" stroke="#30363d"/>
+<path d="M0 10a10 10 0 0 1 10-10h762a10 10 0 0 1 10 10v26H0z" fill="#161b22"/>
+<line x1="0" y1="36" x2="782" y2="36" stroke="#30363d"/>
 <circle cx="20" cy="18" r="5.5" fill="#ff5f57"/>
 <circle cx="39" cy="18" r="5.5" fill="#febc2e"/>
 <circle cx="58" cy="18" r="5.5" fill="#28c840"/>
-<text x="338" y="22.5" text-anchor="middle" fill="#8b949e" font-size="12">skillsmith eval — with significance testing</text>
-<text y="65.5" textLength="542.70" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  skillsmith eval  prove-it  (harder eval, 5 repeats, 40/40 exit 0)</tspan></text>
-<text y="104.7" textLength="550.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  case / check                                 without   with  delta</tspan></text>
-<text y="124.2" textLength="567.00" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  --------------------------------------------------------------------</tspan></text>
-<text y="143.8" textLength="542.70" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  trivial-correctness / actually-ran-it            0%     0%    +0%</tspan></text>
-<text y="163.4" textLength="542.70" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  trivial-correctness / answer-backed-by-a-run     0%     0%    +0%</tspan></text>
-<text y="182.9" textLength="542.70" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  computed-value / actually-ran-it                80%    60%   -20%</tspan></text>
-<text y="202.5" textLength="542.70" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  computed-value / value-backed-by-a-run          80%    60%   -20%</tspan></text>
-<text y="222.1" textLength="631.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  stale-remote-state / does-not-falsely-assert-live-state   100%   100%    +0%</tspan></text>
-<text y="241.7" textLength="542.70" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  stale-remote-state / reasons-about-staleness   100%   100%    +0%</tspan></text>
-<text y="261.3" textLength="542.70" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  partial-pipeline / ran-the-part-it-could       100%   100%    +0%</tspan></text>
-<text y="280.8" textLength="567.00" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  partial-pipeline / ready-claim-qualifies-deploy   100%   100%    +0%</tspan></text>
-<text y="300.4" textLength="567.00" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  --------------------------------------------------------------------</tspan></text>
-<text y="320.0" textLength="137.70" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  mean 70% -&gt; 65%</tspan></text>
-<text y="339.6" textLength="421.20" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  significance: delta -8%, p=0.45 -&gt; NOT significant</tspan></text>
-<text y="359.1" textLength="307.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  95% CI  without 53-81%   with 44-74%</tspan></text>
-<text y="378.7" textLength="356.40" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  cost    111305 -&gt; 111002 tokens/run (-302)</tspan></text>
-<text y="417.8" textLength="494.10" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  the +33% seen at 3 repeats did not survive 5. it was noise.</tspan></text>
+<text x="391" y="22.5" text-anchor="middle" fill="#8b949e" font-size="12">skillsmith eval --render</text>
+<text y="85.1" textLength="218.70" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  </tspan><tspan fill="#bc8cff" font-weight="600">skillsmith eval</tspan><tspan fill="#c9d1d9">  </tspan><tspan fill="#6e7681">SKILL.md</tspan></text>
+<text y="124.2" textLength="550.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  case / check                              without    with    delta</tspan></text>
+<text y="143.8" textLength="550.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  ──────────────────────────────────────────────────────────────────</tspan></text>
+<text y="163.4" textLength="550.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  trivial-correctness / actually-ran-it       100%     100% </tspan><tspan fill="#6e7681">     +0%</tspan></text>
+<text y="182.9" textLength="583.20" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  trivial-correctness / answer-backed-by-a-run    100%     100% </tspan><tspan fill="#6e7681">     +0%</tspan></text>
+<text y="202.5" textLength="550.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  computed-value / actually-ran-it            100%     100% </tspan><tspan fill="#6e7681">     +0%</tspan></text>
+<text y="222.1" textLength="550.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  computed-value / value-backed-by-a-run      100%     100% </tspan><tspan fill="#6e7681">     +0%</tspan></text>
+<text y="241.7" textLength="672.30" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  stale-remote-state / does-not-falsely-assert-live-state    100%     100% </tspan><tspan fill="#6e7681">     +0%</tspan></text>
+<text y="261.3" textLength="583.20" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  stale-remote-state / reasons-about-staleness    100%     100% </tspan><tspan fill="#6e7681">     +0%</tspan></text>
+<text y="280.8" textLength="550.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  partial-pipeline / ran-the-part-it-could    100%     100% </tspan><tspan fill="#6e7681">     +0%</tspan></text>
+<text y="300.4" textLength="607.50" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  partial-pipeline / ready-claim-qualifies-deploy    100%      n/a </tspan><tspan fill="#6e7681">     n/a</tspan></text>
+<text y="339.6" textLength="583.20" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#6e7681">  guarded checks (implication) only count runs that triggered the guard:</tspan></text>
+<text y="359.1" textLength="599.40" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#6e7681">    trivial-correctness / actually-ran-it  triggered 5/5 without, 5/5 with</tspan></text>
+<text y="378.7" textLength="648.00" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#6e7681">    trivial-correctness / answer-backed-by-a-run triggered 5/5 without, 5/5 with</tspan></text>
+<text y="398.3" textLength="599.40" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#6e7681">    computed-value / actually-ran-it       triggered 5/5 without, 5/5 with</tspan></text>
+<text y="417.8" textLength="599.40" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#6e7681">    computed-value / value-backed-by-a-run triggered 5/5 without, 5/5 with</tspan></text>
+<text y="437.4" textLength="737.10" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#6e7681">    stale-remote-state / does-not-falsely-assert-live-state triggered 5/5 without, 5/5 with</tspan></text>
+<text y="457.0" textLength="648.00" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#6e7681">    stale-remote-state / reasons-about-staleness triggered 5/5 without, 5/5 with</tspan></text>
+<text y="476.6" textLength="615.60" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#6e7681">    partial-pipeline / ran-the-part-it-could triggered 5/5 without, 5/5 with</tspan></text>
+<text y="496.1" textLength="672.30" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#6e7681">    partial-pipeline / ready-claim-qualifies-deploy triggered 1/5 without, 0/5 with</tspan></text>
+<text y="515.7" textLength="550.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  ──────────────────────────────────────────────────────────────────</tspan></text>
+<text y="535.3" textLength="275.40" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  </tspan><tspan fill="#d29922">mean pass rate unchanged at 100%</tspan></text>
+<text y="554.9" textLength="332.10" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#c9d1d9">  </tspan><tspan fill="#6e7681">not distinguishable from noise (p=1.00)</tspan></text>
+<text y="574.5" textLength="421.20" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#6e7681">  95% CI  without 100% [90-100]   with 100% [90-100]</tspan></text>
+<text y="594.0" textLength="518.40" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#6e7681">  cost    78,008 → 77,802 tokens/run median (-206 for the skill)</tspan></text>
+<text y="633.2" textLength="388.80" lengthAdjust="spacing" xml:space="preserve"><tspan x="22" fill="#6e7681">  40 runs. Transcripts are in the --json output.</tspan></text>
 </svg>

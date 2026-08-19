@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
-import { runEval, type EvalSpec } from './eval.js'
+import { runEval, type EvalReport, type EvalSpec } from './eval.js'
 import { ParseError, parseSkill } from './parse.js'
 import { lint, RULES, type Finding } from './rules.js'
 import { scaffoldEval, scaffoldSkill } from './scaffold.js'
@@ -34,7 +34,7 @@ const USAGE = `
     rules                     Print every lint rule and why it exists
 
   Options
-    --json                    Machine-readable output
+    --json                    (lint, eval, rules) Machine-readable output
     --summary "<text>"        (new) One line on what the skill does
     --dir <path>              (new) Where to create it          (default ./<name>)
     --settings <path>         (hook) settings.json to edit    (default ~/.claude/settings.json)
@@ -53,14 +53,19 @@ interface Args {
   command: string
   positional: string[]
   flags: Map<string, string | true>
+  help: boolean
 }
 
 function parseArgs(argv: string[]): Args {
   const positional: string[] = []
   const flags = new Map<string, string | true>()
+  let help = false
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string
-    if (a === '-h' || a === '--help') throw new Error(USAGE.trim())
+    if (a === '-h' || a === '--help') {
+      help = true
+      continue
+    }
     if (a.startsWith('--')) {
       const body = a.slice(2)
       const eq = body.indexOf('=')
@@ -80,9 +85,8 @@ function parseArgs(argv: string[]): Args {
     }
     positional.push(a)
   }
-  const command = positional.shift()
-  if (!command) throw new Error(USAGE.trim())
-  return { command, positional, flags }
+  const command = positional.shift() ?? ''
+  return { command, positional, flags, help }
 }
 
 async function resolveSkillFile(target: string): Promise<string> {
@@ -91,7 +95,9 @@ async function resolveSkillFile(target: string): Promise<string> {
   if (!info) throw new Error(`${target} does not exist`)
   if (info.isDirectory()) {
     const candidate = join(abs, 'SKILL.md')
-    if (!(await stat(candidate).catch(() => null))) throw new Error(`${target} has no SKILL.md`)
+    const candidateInfo = await stat(candidate).catch(() => null)
+    if (!candidateInfo) throw new Error(`${target} has no SKILL.md`)
+    if (!candidateInfo.isFile()) throw new Error(`${candidate} is not a file`)
     return candidate
   }
   return abs
@@ -170,8 +176,40 @@ async function cmdNew(args: Args): Promise<number> {
 async function cmdEval(args: Args): Promise<number> {
   const specPath = args.positional[0]
   if (!specPath) throw new Error('eval needs a path to an eval.json')
+
+  // Re-render a saved report (the --json output) without spending any calls.
+  if (args.flags.has('render')) {
+    let report: EvalReport
+    try {
+      report = JSON.parse(await readFile(resolve(specPath), 'utf8')) as EvalReport
+    } catch (err) {
+      throw new Error(`${specPath} is not a readable report JSON: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    if (!Array.isArray(report.summary) || !report.significance) {
+      throw new Error(`${specPath} is not a skillsmith eval report (run \`eval ... --json\` to produce one).`)
+    }
+    const rendered = renderEvalReport(report)
+    process.stdout.write(rendered.text)
+    return rendered.exitCode
+  }
+
   const abs = resolve(specPath)
-  const spec = JSON.parse(await readFile(abs, 'utf8')) as EvalSpec
+
+  const rawSpec = await readFile(abs, 'utf8').catch((err: NodeJS.ErrnoException) => {
+    throw new Error(err.code === 'ENOENT' ? `${specPath} does not exist` : `Could not read ${specPath}: ${err.message}`)
+  })
+  let spec: EvalSpec
+  try {
+    spec = JSON.parse(rawSpec) as EvalSpec
+  } catch (err) {
+    throw new Error(`${specPath} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`)
+  }
+  if (typeof spec !== 'object' || spec === null) throw new Error(`${specPath} must contain a JSON object`)
+  if (typeof spec.runner !== 'string') throw new Error(`${specPath} is missing a "runner" string`)
+  if (!Array.isArray(spec.cases) || spec.cases.length === 0) {
+    throw new Error(`${specPath} needs a non-empty "cases" array`)
+  }
+  if (typeof spec.skill !== 'string') throw new Error(`${specPath} is missing a "skill" path`)
   // Skill path in the spec is relative to the spec file.
   spec.skill = resolve(dirname(abs), spec.skill)
 
@@ -191,8 +229,16 @@ async function cmdEval(args: Args): Promise<number> {
     return 0
   }
 
+  const rendered = renderEvalReport(report)
+  process.stdout.write(rendered.text)
+  return rendered.exitCode
+}
+
+/** Render an eval report as the terminal output. Shared by a live run and by
+ * `--render`, which re-renders a saved report without spending a single call. */
+function renderEvalReport(report: EvalReport): { text: string; exitCode: number } {
   const out: string[] = ['']
-  out.push(`  ${c.bold(c.magenta('skillsmith eval'))}  ${c.dim(basename(spec.skill))}`)
+  out.push(`  ${c.bold(c.magenta('skillsmith eval'))}  ${c.dim(basename(report.spec.skill))}`)
   out.push('')
   out.push(`  ${'case / check'.padEnd(40)}${'without'.padStart(9)}${'with'.padStart(8)}${'delta'.padStart(9)}`)
   out.push(`  ${'─'.repeat(66)}`)
@@ -200,10 +246,10 @@ async function cmdEval(args: Args): Promise<number> {
   // there can be mostly vacuous, not evidence the skill did anything.
   const guarded = report.summary.some((r) => r.baselineApplicable + r.skillApplicable > 0)
   for (const row of report.summary) {
-    const pct = (n: number) => `${Math.round(n * 100)}%`.padStart(8)
+    const pct = (n: number | null) => (n === null ? 'n/a' : `${Math.round(n * 100)}%`).padStart(8)
     const delta = row.delta
-    const d = (delta >= 0 ? '+' : '') + `${Math.round(delta * 100)}%`
-    const tone = delta > 0 ? c.green : delta < 0 ? c.red : c.dim
+    const d = delta === null ? 'n/a' : (delta >= 0 ? '+' : '') + `${Math.round(delta * 100)}%`
+    const tone = delta === null ? c.dim : delta > 0 ? c.green : delta < 0 ? c.red : c.dim
     out.push(`  ${`${row.caseId} / ${row.checkId}`.padEnd(40)}${pct(row.baseline)} ${pct(row.skill)} ${tone(d.padStart(8))}`)
   }
   if (guarded) {
@@ -233,10 +279,14 @@ async function cmdEval(args: Args): Promise<number> {
   const sig = report.significance
   const pct = (n: number) => `${Math.round(n * 100)}%`
   const line =
-    sig.significant
+    sig.significant && sig.delta > 0
       ? c.green(
           `significant: the skill's effect is real (p=${sig.p.toFixed(3)}, ${sig.total} outcomes/arm)`,
         )
+      : sig.significant && sig.delta < 0
+        ? c.red(
+            `significant, but WORSE: the skill measurably hurts (p=${sig.p.toFixed(3)}, ${sig.total} outcomes/arm)`,
+          )
       : sig.suggestMoreRuns
         ? c.yellow(
             `promising but unproven: +${pct(sig.delta)} could be noise at this sample ` +
@@ -266,9 +316,8 @@ async function cmdEval(args: Args): Promise<number> {
   out.push('')
   out.push(c.dim(`  ${report.results.length} runs. Transcripts are in the --json output.`))
   out.push('')
-  process.stdout.write(out.join('\n'))
   // Exit success only when the improvement is real, not merely positive.
-  return sig.significant && sig.delta > 0 ? 0 : 1
+  return { text: out.join('\n'), exitCode: sig.significant && sig.delta > 0 ? 0 : 1 }
 }
 
 function cmdRules(args: Args): number {
@@ -350,6 +399,17 @@ async function cmdHook(args: Args): Promise<number> {
 
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2))
+
+  // Help is a success, not an error: print usage and exit 0.
+  if (args.help || args.command === 'help') {
+    process.stdout.write(USAGE)
+    return 0
+  }
+  if (!args.command) {
+    process.stderr.write(USAGE)
+    return 1
+  }
+
   switch (args.command) {
     case 'lint':
       return cmdLint(args)

@@ -34,12 +34,19 @@ const finding = (rule: Rule, message: string, fix: string, line?: number): Findi
  */
 const prose = (text: string): string =>
   text
-    .replace(/```[\s\S]*?```/g, ' ')
+    // Both fence styles, so a ~~~ block hides its contents like a ``` one.
+    .replace(/^[ \t]*(```|~~~)[\s\S]*?^[ \t]*\1[ \t]*$/gm, ' ')
     .replace(/`[^`\n]*`/g, ' ')
-    // A quoted phrase may wrap across one hard line break in prose, so allow
-    // a single newline inside it. Two would mean an unbalanced quote.
-    .replace(/"[^"]{1,80}"/g, (m) => (m.split('\n').length <= 2 ? ' ' : m))
-    .replace(/“[^”]{1,80}”/g, (m) => (m.split('\n').length <= 2 ? ' ' : m))
+    // A quoted example rule can be long; the previous 80-char cap let a long
+    // quoted "never say X" rule leak its own hedge words. Allow up to a
+    // paragraph, still bounded so an unbalanced quote can't swallow the file.
+    .replace(/"[^"]{1,400}"/g, (m) => (m.split('\n').length <= 3 ? ' ' : m))
+    .replace(/“[^”]{1,400}”/g, (m) => (m.split('\n').length <= 3 ? ' ' : m))
+
+/** Description plus body: the vague-language rules must cover the description,
+ * the single most-read piece of a skill. */
+const descriptionAndBody = (skill: ParsedSkill): string =>
+  (skill.frontmatter.description ?? '') + '\n' + skill.body
 
 /** Count lines matching a pattern, for "is there any of X" checks. */
 const count = (text: string, pattern: RegExp): number => (text.match(pattern) ?? []).length
@@ -93,8 +100,11 @@ export const RULES: Rule[] = [
     level: 'warn',
     why: 'A skill that fires on everything dilutes every other skill and burns context on tasks it does not help. The harness needs to know when NOT to load it.',
     check(skill) {
+      // Scope belongs in the description, the only text the harness reads to
+      // decide loading. An incidental "do not use tabs" in the body is not a
+      // scope statement, so the body is no longer accepted as one.
       const d = skill.frontmatter.description ?? ''
-      if (NEGATIVE_SCOPE.test(d) || NEGATIVE_SCOPE.test(skill.body)) return []
+      if (NEGATIVE_SCOPE.test(d)) return []
       return [finding(this, 'No statement of when NOT to use this skill', 'Add "Do NOT use for…" to the description, naming the nearby tasks it should stay out of.', 1)]
     },
   },
@@ -104,7 +114,7 @@ export const RULES: Rule[] = [
     level: 'error',
     why: 'Models follow steps; they do not follow adjectives. A skill with no numbered procedure is a mood, and moods do not survive past the first turn.',
     check(skill) {
-      const steps = count(skill.body, ORDERED_STEP)
+      const steps = count(prose(skill.body), ORDERED_STEP)
       if (steps >= 3) return []
       return [finding(this, `body has ${steps} numbered step(s); a working skill has an ordered procedure`, 'Write the behaviour as a numbered list the agent walks every time: "1. … 2. … 3. …". At least three steps, each a concrete action.')]
     },
@@ -116,7 +126,9 @@ export const RULES: Rule[] = [
     why: 'A behavioural skill that does not say it stays active gets applied once and then forgotten as the conversation grows. Persistence has to be stated to survive.',
     check(skill) {
       // One-shot skills (generate a thing, run a check) do not need this.
-      const looksOneShot = /\b(one[- ]shot|run once|generate|produce a|output a|report)\b/i.test(skill.frontmatter.description ?? '')
+      // Only an explicit "one-shot" marker exempts a skill. Matching "generate"
+      // or "report" wrongly exempted persistent skills that merely mentioned them.
+      const looksOneShot = /\bone[- ]shot\b/i.test(skill.frontmatter.description ?? '')
       if (looksOneShot) return []
       if (PERSISTENCE.test(skill.body)) return []
       return [finding(this, 'Behavioural skill has no persistence clause', 'State plainly: "ACTIVE EVERY RESPONSE until the user says stop." If this is a one-shot skill, say "one-shot" in the description.')]
@@ -128,7 +140,9 @@ export const RULES: Rule[] = [
     level: 'warn',
     why: 'If there is no stated way to turn it off, the user fights the skill instead of the task, and usually deletes it.',
     check(skill) {
-      const looksOneShot = /\b(one[- ]shot|run once|generate|produce a|output a|report)\b/i.test(skill.frontmatter.description ?? '')
+      // Only an explicit "one-shot" marker exempts a skill. Matching "generate"
+      // or "report" wrongly exempted persistent skills that merely mentioned them.
+      const looksOneShot = /\bone[- ]shot\b/i.test(skill.frontmatter.description ?? '')
       if (looksOneShot) return []
       if (OFF_SWITCH.test(skill.body)) return []
       return [finding(this, 'No off switch', 'Name the phrase that disables it, e.g. "Off only when the user says \\"stop prove-it\\"."')]
@@ -140,7 +154,7 @@ export const RULES: Rule[] = [
     level: 'warn',
     why: 'Every hedge ("try to", "where possible", "consider") is a permission slip the model will use to skip the instruction under pressure. Hedged rules are optional rules.',
     check(skill) {
-      const hits = prose(skill.body).match(HEDGE) ?? []
+      const hits = prose(descriptionAndBody(skill)).match(HEDGE) ?? []
       if (hits.length <= 2) return []
       const sample = [...new Set(hits.map((h) => h.toLowerCase()))].slice(0, 4).join('", "')
       return [finding(this, `${hits.length} hedges ("${sample}")`, 'Make each rule unconditional, or delete it. "Run the tests" beats "try to run the tests where possible".')]
@@ -152,7 +166,7 @@ export const RULES: Rule[] = [
     level: 'warn',
     why: 'Words like "helpful", "robust", "best practices" carry no instruction. The model already wants to be those things; repeating them changes nothing.',
     check(skill) {
-      const hits = prose(skill.body).match(ADJECTIVE_SOUP) ?? []
+      const hits = prose(descriptionAndBody(skill)).match(ADJECTIVE_SOUP) ?? []
       if (hits.length <= 3) return []
       const sample = [...new Set(hits.map((h) => h.toLowerCase()))].slice(0, 4).join('", "')
       return [finding(this, `${hits.length} content-free quality words ("${sample}")`, 'Replace each with the concrete behaviour you mean. "Robust" → "handle the empty-input case and say so".')]
@@ -164,7 +178,7 @@ export const RULES: Rule[] = [
     level: 'warn',
     why: 'One before/after example does more than a page of rules: it shows the model the exact shape of the change you want.',
     check(skill) {
-      if (EXAMPLE_MARK.test(skill.body) || /```/.test(skill.body)) return []
+      if (EXAMPLE_MARK.test(skill.body) || /(```|~~~)/.test(skill.body)) return []
       return [finding(this, 'No concrete example of the behaviour', 'Add at least one "instead of X, do Y" pair, or a short fenced before/after block.')]
     },
   },
@@ -174,7 +188,7 @@ export const RULES: Rule[] = [
     level: 'info',
     why: 'A skill with no stated observable effect cannot be evaluated, so nobody will ever know whether it works. That is how most skills end up as decoration.',
     check(skill) {
-      if (MEASURABLE.test(skill.body)) return []
+      if (MEASURABLE.test(prose(skill.body))) return []
       return [finding(this, 'Nothing in the skill says what observable change it produces', 'Add one line naming the measurable effect: fewer tool calls, shorter replies, tests run before "done", etc. The eval harness checks for exactly this.')]
     },
   },

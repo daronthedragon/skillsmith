@@ -74,13 +74,15 @@ export interface CaseResult {
 export interface EvalReport {
   spec: EvalSpec
   results: CaseResult[]
-  /** Per check: pass rate without the skill vs with it. */
+  /** Per check: pass rate without the skill vs with it. `null` for an arm means
+   * the check never applied there (a guard that did not trigger), which is not
+   * the same as 0% - and `delta` is then null too, not a misleading -100%. */
   summary: Array<{
     caseId: string
     checkId: string
-    baseline: number
-    skill: number
-    delta: number
+    baseline: number | null
+    skill: number | null
+    delta: number | null
     /** How many runs per arm actually triggered the check's guard. */
     baselineApplicable: number
     skillApplicable: number
@@ -110,17 +112,45 @@ export interface EvalReport {
 }
 
 /**
- * Quote one argument for whatever shell spawn() will use. Node picks cmd.exe
- * on Windows, where a single quote is an ordinary character - POSIX quoting
- * there leaves cmd waiting on an unterminated token and the runner hangs.
+ * Quote one argument for whatever shell spawn() will use. Node picks cmd.exe on
+ * Windows, where a single quote is an ordinary character, so POSIX quoting there
+ * leaves cmd waiting on an unterminated token and the runner hangs.
+ *
+ * Inside cmd.exe double quotes the only character that still needs escaping is
+ * the double quote itself; `^` and `!` are literal there, so escaping them (as
+ * an earlier version did) baked stray carets into the prompt the model saw.
+ * Two cases cannot be represented on a cmd.exe command line at all — an embedded
+ * newline, and `%VAR%` where VAR is a defined environment variable — so those
+ * are rejected loudly rather than silently mangled.
  */
 export function shellQuote(text: string): string {
   if (process.platform === 'win32') {
-    // cmd.exe: double quotes, with embedded double quotes doubled and the
-    // metacharacters cmd still interprets inside quotes neutralised.
-    return `"${text.replace(/"/g, '""').replace(/[%!^]/g, '^$&')}"`
+    if (text.includes('\n') || text.includes('\r')) {
+      throw new Error('A runner prompt cannot contain a newline on Windows (cmd.exe limitation). Keep prompts to one line.')
+    }
+    return `"${text.replace(/"/g, '""')}"`
   }
   return `'${text.replace(/'/g, `'\\''`)}'`
+}
+
+/**
+ * Kill a spawned shell AND its descendants. `shell: true` makes cmd.exe (or sh)
+ * the direct child, so killing the child alone orphans the real runner - a
+ * `claude -p` call that keeps running, and costing money, after a timeout. On
+ * Windows taskkill /T walks the tree; on POSIX the shell usually forwards the
+ * signal, and killing the pid is the portable best effort.
+ */
+function killTree(child: ReturnType<typeof spawn>): void {
+  if (child.pid === undefined) return
+  if (process.platform === 'win32') {
+    try {
+      spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
+    } catch {
+      child.kill('SIGKILL')
+    }
+  } else {
+    child.kill('SIGKILL')
+  }
 }
 
 export function runCommand(command: string, timeoutMs: number): Promise<{ stdout: string; code: number }> {
@@ -135,7 +165,7 @@ export function runCommand(command: string, timeoutMs: number): Promise<{ stdout
     const timer = setTimeout(() => {
       if (done) return
       done = true
-      child.kill('SIGKILL')
+      killTree(child)
       resolve({ stdout: stdout + '\n[skillsmith: runner timed out]', code: 124 })
     }, timeoutMs)
     child.stdout?.on('data', (c: Buffer) => (stdout += c.toString('utf8')))
@@ -190,32 +220,108 @@ export function scoreTranscript(transcript: string, checks: Check[]): CaseResult
  */
 async function stageRun(skillPath: string, arm: 'baseline' | 'skill'): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), `skillsmith-${arm}-`))
-  const { mkdir } = await import('node:fs/promises')
-  const skillsDir = join(dir, '.claude', 'skills')
-  await mkdir(skillsDir, { recursive: true })
-  if (arm === 'skill') {
-    const raw = await readFile(skillPath, 'utf8')
-    const name = /^name:\s*(.+)$/m.exec(raw)?.[1]?.trim() ?? 'skill-under-test'
-    await mkdir(join(skillsDir, name), { recursive: true })
-    await writeFile(join(skillsDir, name, 'SKILL.md'), raw, 'utf8')
+  try {
+    const { mkdir } = await import('node:fs/promises')
+    const skillsDir = join(dir, '.claude', 'skills')
+    await mkdir(skillsDir, { recursive: true })
+    if (arm === 'skill') {
+      const raw = await readFile(skillPath, 'utf8')
+      const name = /^name:\s*(.+)$/m.exec(raw)?.[1]?.trim() ?? 'skill-under-test'
+      await mkdir(join(skillsDir, name), { recursive: true })
+      await writeFile(join(skillsDir, name, 'SKILL.md'), raw, 'utf8')
+    }
+    return dir
+  } catch (err) {
+    // Never leak the temp dir if staging fails partway through.
+    await rm(dir, { recursive: true, force: true })
+    throw err
   }
-  return dir
+}
+
+/** Fail fast on an unusable spec, before spawning anything, so a bad regex or a
+ * missing skill cannot abort mid-run and orphan in-flight jobs. */
+function validateSpec(spec: EvalSpec): void {
+  if (!Array.isArray(spec.cases) || spec.cases.length === 0) {
+    throw new Error('eval.json has no cases to run.')
+  }
+  for (const testCase of spec.cases) {
+    for (const check of testCase.checks) {
+      const compile = (pattern: string, label: string) => {
+        try {
+          new RegExp(pattern, check.flags ?? 'gi')
+        } catch (err) {
+          throw new Error(
+            `Check "${testCase.id}/${check.id}" has an invalid ${label} regex: ${err instanceof Error ? err.message : String(err)}`,
+          )
+        }
+      }
+      compile(check.pattern, 'pattern')
+      if (check.given !== undefined) compile(check.given, 'given')
+    }
+  }
+}
+
+const TOKEN_FIELDS = [
+  'input_tokens',
+  'output_tokens',
+  'cache_creation_input_tokens',
+  'cache_read_input_tokens',
+] as const
+
+function sumUsage(usage: unknown): number | null {
+  if (typeof usage !== 'object' || usage === null) return null
+  let total = 0
+  let found = false
+  for (const key of TOKEN_FIELDS) {
+    const v = (usage as Record<string, unknown>)[key]
+    if (typeof v === 'number') {
+      total += v
+      found = true
+    }
+  }
+  return found ? total : null
 }
 
 /**
- * Total tokens the run consumed, summed from any `usage` objects in the
- * transcript. Works on Claude Code's stream-json (a `result` event and per
- * assistant message carry usage); returns null when the format carries no
- * usage, so the report can distinguish "zero" from "unknown".
+ * Total tokens the run consumed, from Claude Code's stream-json transcript.
+ *
+ * Parsed as JSONL, not by regex over the raw text: a `usage` object nests other
+ * objects (a regex stopping at the first `}` truncates it), and the same call's
+ * usage is echoed once per assistant event and again in the `result` event
+ * (summing every occurrence triple-counts). The `result` event carries the
+ * authoritative cumulative total — the same figure that drives the CLI's
+ * reported cost — so use it when present, and fall back to the assistant
+ * messages only when there is no result event. Returns null when no usage is
+ * present, so the report can tell "zero" from "unknown".
  */
 export function parseTokens(transcript: string): number | null {
+  const objects: Array<Record<string, unknown>> = []
+  for (const line of transcript.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed[0] !== '{') continue
+    try {
+      objects.push(JSON.parse(trimmed) as Record<string, unknown>)
+    } catch {
+      // Not a JSON line (e.g. a plain-text runner); ignore it.
+    }
+  }
+
+  // Authoritative: the final result event's cumulative usage.
+  for (let i = objects.length - 1; i >= 0; i--) {
+    const o = objects[i] as Record<string, unknown>
+    if (o.type === 'result') {
+      const s = sumUsage(o.usage ?? (o.message as Record<string, unknown> | undefined)?.usage)
+      if (s !== null) return s
+    }
+  }
+
+  // Fallback: sum the per-message usages when no result event carried one.
   let total = 0
   let found = false
-  // Match "usage": { ... } objects and sum the token fields inside each.
-  for (const m of transcript.matchAll(/"usage"\s*:\s*\{([^}]*)\}/g)) {
-    const body = m[1] ?? ''
-    for (const f of body.matchAll(/"(input_tokens|output_tokens|cache_creation_input_tokens|cache_read_input_tokens)"\s*:\s*(\d+)/g)) {
-      total += Number(f[2])
+  for (const o of objects) {
+    const s = sumUsage((o.message as Record<string, unknown> | undefined)?.usage ?? o.usage)
+    if (s !== null) {
+      total += s
       found = true
     }
   }
@@ -240,6 +346,7 @@ export async function runEval(
   spec: EvalSpec,
   onProgress?: (line: string) => void,
 ): Promise<EvalReport> {
+  validateSpec(spec)
   const repeat = spec.repeat ?? 1
   const timeout = spec.timeoutMs ?? 180_000
   const concurrency = spec.concurrency ?? 4
@@ -278,16 +385,21 @@ export async function runEval(
   const summary: EvalReport['summary'] = []
   for (const testCase of spec.cases) {
     for (const check of testCase.checks) {
-      const rate = (arm: 'baseline' | 'skill') => {
-        const rows = results.filter((r) => r.id === testCase.id && r.arm === arm)
-        if (rows.length === 0) return 0
+      // Rate is measured over runs where the check actually applied. A guarded
+      // check that never triggered in an arm has no evidence there; counting its
+      // vacuous passes against an all-runs denominator inflated such arms to
+      // 100% and produced inverted deltas.
+      const applicableRows = (arm: 'baseline' | 'skill') =>
+        results
+          .filter((r) => r.id === testCase.id && r.arm === arm)
+          .filter((r) => r.checks.find((c) => c.id === check.id)?.applicable !== false)
+      const rate = (arm: 'baseline' | 'skill'): number | null => {
+        const rows = applicableRows(arm)
+        if (rows.length === 0) return null // no evidence in this arm, not 0%
         const passed = rows.filter((r) => r.checks.find((c) => c.id === check.id)?.passed).length
         return passed / rows.length
       }
-      const applicable = (arm: 'baseline' | 'skill') =>
-        results
-          .filter((r) => r.id === testCase.id && r.arm === arm)
-          .filter((r) => r.checks.find((c) => c.id === check.id)?.applicable !== false).length
+      const applicable = (arm: 'baseline' | 'skill') => applicableRows(arm).length
       const baseline = rate('baseline')
       const skill = rate('skill')
       summary.push({
@@ -295,15 +407,19 @@ export async function runEval(
         checkId: check.id,
         baseline,
         skill,
-        delta: skill - baseline,
+        // A delta needs both arms to have evidence.
+        delta: baseline !== null && skill !== null ? skill - baseline : null,
         baselineApplicable: applicable('baseline'),
         skillApplicable: applicable('skill'),
       })
     }
   }
 
-  const mean = (arm: 'baseline' | 'skill') =>
-    summary.length === 0 ? 0 : summary.reduce((s, r) => s + r[arm], 0) / summary.length
+  // Mean over the checks that actually produced a rate in that arm.
+  const mean = (arm: 'baseline' | 'skill') => {
+    const vals = summary.map((r) => r[arm]).filter((v): v is number => v !== null)
+    return vals.length === 0 ? 0 : vals.reduce((s, v) => s + v, 0) / vals.length
+  }
 
   // Pool every applicable check outcome across all runs into one two-arm
   // comparison. Per-check n is tiny; pooled n is large enough to test.

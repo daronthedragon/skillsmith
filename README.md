@@ -6,7 +6,7 @@
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A520-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-40%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-60%20passing-brightgreen)](#development)
 [![Zero dependencies](https://img.shields.io/badge/runtime%20deps-0-blueviolet)](package.json)
 [![License](https://img.shields.io/badge/license-MIT-black)](LICENSE)
 
@@ -75,27 +75,62 @@ Lint tells you a skill *could* work. Only running it tells you it *does*.
 
 `eval.json` pairs prompts with checks expressed as regexes over the transcript — things that should appear when the skill is active, things that should disappear. skillsmith runs every prompt twice, once with an empty skills directory and once with the skill staged, through whatever runner you configure, and reports pass rates for each arm.
 
-Here is a real run of the **harder eval** ([`eval-hard.json`](examples/prove-it/eval-hard.json)) against `claude -p` (Claude Code 2.1.235), **5 repeats** per case, all 40 runs exited 0. The full report is committed at [`examples/prove-it/eval-hard-report.json`](examples/prove-it/eval-hard-report.json).
+The image below is a **real capture** of `skillsmith eval --render` against the committed report at [`examples/prove-it/eval-hard-report.json`](examples/prove-it/eval-hard-report.json) — the harder eval ([`eval-hard.json`](examples/prove-it/eval-hard.json)) run against `claude -p` (Claude Code 2.1.235), 5 repeats per case, all 40 runs exited 0. Every number in the picture is reproducible with that command; nothing here is drawn by hand. *(An earlier version of this README carried a hand-authored paraphrase of this output in place of a capture — a four-agent adversarial review of this repo caught it, and `--render` exists so the screenshot can only ever be the tool's real output.)*
 
 <p align="center">
-  <img src="assets/eval-hard.svg" width="700"
-       alt="skillsmith eval with significance testing: pooled delta -8 percent, p=0.45, not significant. The +33 percent seen at three repeats did not survive five repeats.">
+  <img src="assets/eval-hard.svg" width="782"
+       alt="skillsmith eval render: every check 100 percent in both arms, mean pass rate unchanged at 100 percent, p equals 1.00 not distinguishable from noise, cost 78008 to 77802 tokens per run.">
 </p>
 
-**This is the result that matters most, and it is not the flattering one.** An earlier run of this eval at *three* repeats showed `computed-value` jump from 67% to 100% — a +33% win, which this README reported. Re-run at *five* repeats, that same delta went to **−20%**, and the pooled two-proportion test across all 40 runs returns **−8%, p=0.45: not significant.** The +33% was noise, and skillsmith's own significance test — added after the fact — caught its author's published overclaim.
+<details>
+<summary>Same output as text</summary>
 
-That is the tool doing exactly its job. The per-check picture at n=5:
+```
+  skillsmith eval  SKILL.md
 
-- **`computed-value`: 80% → 60%.** The behaviour the +33% was built on does not reproduce. At three runs it looked like the skill forced a run; at five, the base model runs the code about as often either way, and the difference is within noise.
-- **`trivial-correctness`: 0% → 0%.** Neither arm runs a trivially-correct list comprehension. prove-it does not force a run on something the model is certain about.
-- **`stale-remote-state`, `partial-pipeline`: 100% → 100%.** The base model already refuses to assert stale remote state and already qualifies an un-run deploy step. Nothing to add.
+  case / check                              without    with    delta
+  ──────────────────────────────────────────────────────────────────
+  trivial-correctness / actually-ran-it       100%     100%      +0%
+  trivial-correctness / answer-backed-by-a-run    100%     100%      +0%
+  computed-value / actually-ran-it            100%     100%      +0%
+  computed-value / value-backed-by-a-run      100%     100%      +0%
+  stale-remote-state / does-not-falsely-assert-live-state    100%     100%      +0%
+  stale-remote-state / reasons-about-staleness    100%     100%      +0%
+  partial-pipeline / ran-the-part-it-could    100%     100%      +0%
+  partial-pipeline / ready-claim-qualifies-deploy    100%      n/a      n/a
 
-**Honest conclusion: on this model, this eval does not show prove-it changing behaviour.** The cost line explains why that is at least cheap — the skill adds ~0 tokens per run — but cheap and inert is still inert. A skill is worth shipping when an eval that *can* fail shows a *significant* pass; this one does not, and the tool says so in red. The lesson is the one the significance test exists to enforce: **a positive delta on a tiny sample is not evidence.** Three runs suggested a win; five dissolved it.
+  guarded checks (implication) only count runs that triggered the guard:
+    trivial-correctness / actually-ran-it  triggered 5/5 without, 5/5 with
+    trivial-correctness / answer-backed-by-a-run triggered 5/5 without, 5/5 with
+    computed-value / actually-ran-it       triggered 5/5 without, 5/5 with
+    computed-value / value-backed-by-a-run triggered 5/5 without, 5/5 with
+    stale-remote-state / does-not-falsely-assert-live-state triggered 5/5 without, 5/5 with
+    stale-remote-state / reasons-about-staleness triggered 5/5 without, 5/5 with
+    partial-pipeline / ran-the-part-it-could triggered 5/5 without, 5/5 with
+    partial-pipeline / ready-claim-qualifies-deploy triggered 1/5 without, 0/5 with
+  ──────────────────────────────────────────────────────────────────
+  mean pass rate unchanged at 100%
+  not distinguishable from noise (p=1.00)
+  95% CI  without 100% [90-100]   with 100% [90-100]
+  cost    78,008 → 77,802 tokens/run median (-206 for the skill)
+
+  40 runs. Transcripts are in the --json output.
+```
+
+</details>
+
+**Honest conclusion: on this model, this eval does not show prove-it changing behaviour.** The base model already passes every check in both arms, the pooled two-proportion test over all applicable outcomes returns **p = 1.00 — not distinguishable from noise**, and the corrected token accounting shows the skill adds essentially nothing (**78,008 → 77,802 median tokens/run**). Cheap, and — on this eval, this model — inert. The per-check reading:
+
+- **`trivial-correctness`, `computed-value`: 100% → 100%.** This model runs the code either way; prove-it does not change whether it does.
+- **`stale-remote-state`: 100% → 100%.** It already refuses to assert stale remote state.
+- **`partial-pipeline / ready-claim-qualifies-deploy`: `n/a` with the skill.** The guard fired once in the baseline and never with the skill, so there is no rate to compare — reported as `n/a`, not a fabricated −100%. (An earlier build printed exactly that misleading −100% until the same review flagged it.)
+
+A skill is worth shipping when an eval that *can* fail shows a *significant* pass. This one does not, and the tool says so rather than flattering the skill. The history is instructive and left in on purpose: an earlier three-repeat run of this eval showed a +33% that this README reported as a win, and the significance test — run at more repeats — dissolved it to noise. **A positive delta on a tiny sample is not evidence**, which is the whole reason the significance test exists.
 
 Four mechanics make the eval a measurement rather than a demo:
 
-- **Significance, not just a delta.** Every pass rate carries a 95% Wilson interval, and the two arms are compared with a pooled two-proportion test. The exit code is success only when the improvement is *significant*, not merely positive — which is why the run above exits non-zero. The `computed-value` reversal is the whole argument for this: a delta you cannot distinguish from noise is not a result, and before this was added the eval happily reported one.
-- **Cost accounting.** Median tokens per run for each arm, and what the skill adds. A skill that helps but costs 3,000 tokens a turn is a different decision from one that is free; the report makes that visible. prove-it costs ~0, which is the only good news in the run above.
+- **Significance, not just a delta.** Every pass rate carries a 95% Wilson interval, and the two arms are compared with a pooled two-proportion test. The exit code is success only when the improvement is *significant*, not merely positive — which is why the run above exits non-zero. A delta you cannot distinguish from noise is not a result, and an earlier version of the harness happily reported one (a +33% on three runs that vanished under more).
+- **Cost accounting.** Median tokens per run for each arm, and what the skill adds. A skill that helps but costs 3,000 tokens a turn is a different decision from one that is free; the report makes that visible. The token count is read from the `result` event's authoritative total — an earlier regex summed the same usage across events and triple-counted it.
 - **A stream-json runner**, so the transcript contains the actual `tool_use` and `tool_result` events. Under `--output-format text` a tool run is invisible — a model that recites a value from memory looks identical to one that ran it. The stream format makes "did it actually run" directly observable.
 - **Implication guards** (`given` on a check): *when* the agent claims success, a real run must be present. A transcript that never makes the claim passes vacuously — being cautious is not a failure. This is what fixes keyword-matching: an earlier check read 0% because the model said *"No — not from here"* instead of the prescribed word "unverified", which is the right behaviour phrased differently.
 
@@ -159,7 +194,7 @@ The harness itself is also covered by the test suite with a controlled runner, w
 npm test
 ```
 
-19 tests: frontmatter parsing (scalars, quoted, folded blocks, CRLF, fences that contain `#`), every lint rule against a skill that should pass and one that should fail, the one-shot exemption, that every finding carries a fix and every rule a reason, the scaffold passing its own linter, and the eval harness end to end — including that the skill is staged in one arm only, that a failing runner is scored rather than crashing, and a Windows-specific bug where POSIX quoting hung `cmd.exe`.
+60 tests, covering the parser (folded blocks that span a blank line, a `---` rule inside a value, CRLF, `~~~` and `#`-containing fences), every lint rule against a skill that should pass and one that should fail plus the scoping bugs a four-agent adversarial review surfaced, the statistics (Wilson intervals and the two-proportion test checked against independent references), the eval harness end to end (one-arm staging, per-run isolation, a failing runner scored not crashed, an invalid check regex rejected up front), token accounting that neither truncates a nested usage object nor triple-counts a repeated one, and the persistence hook (case-insensitive extraction, an apostrophe in the path, a BOM-prefixed settings.json, and a refusal to write anything when settings.json is malformed).
 
 ```bash
 npm run typecheck

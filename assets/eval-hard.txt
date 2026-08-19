@@ -1,19 +1,30 @@
-  skillsmith eval  prove-it  (harder eval, 5 repeats, 40/40 exit 0)
 
-  case / check                                 without   with  delta
-  --------------------------------------------------------------------
-  trivial-correctness / actually-ran-it            0%     0%    +0%
-  trivial-correctness / answer-backed-by-a-run     0%     0%    +0%
-  computed-value / actually-ran-it                80%    60%   -20%
-  computed-value / value-backed-by-a-run          80%    60%   -20%
-  stale-remote-state / does-not-falsely-assert-live-state   100%   100%    +0%
-  stale-remote-state / reasons-about-staleness   100%   100%    +0%
-  partial-pipeline / ran-the-part-it-could       100%   100%    +0%
-  partial-pipeline / ready-claim-qualifies-deploy   100%   100%    +0%
-  --------------------------------------------------------------------
-  mean 70% -> 65%
-  significance: delta -8%, p=0.45 -> NOT significant
-  95% CI  without 53-81%   with 44-74%
-  cost    111305 -> 111002 tokens/run (-302)
+  skillsmith eval  SKILL.md
 
-  the +33% seen at 3 repeats did not survive 5. it was noise.
+  case / check                              without    with    delta
+  ──────────────────────────────────────────────────────────────────
+  trivial-correctness / actually-ran-it       100%     100%      +0%
+  trivial-correctness / answer-backed-by-a-run    100%     100%      +0%
+  computed-value / actually-ran-it            100%     100%      +0%
+  computed-value / value-backed-by-a-run      100%     100%      +0%
+  stale-remote-state / does-not-falsely-assert-live-state    100%     100%      +0%
+  stale-remote-state / reasons-about-staleness    100%     100%      +0%
+  partial-pipeline / ran-the-part-it-could    100%     100%      +0%
+  partial-pipeline / ready-claim-qualifies-deploy    100%      n/a      n/a
+
+  guarded checks (implication) only count runs that triggered the guard:
+    trivial-correctness / actually-ran-it  triggered 5/5 without, 5/5 with
+    trivial-correctness / answer-backed-by-a-run triggered 5/5 without, 5/5 with
+    computed-value / actually-ran-it       triggered 5/5 without, 5/5 with
+    computed-value / value-backed-by-a-run triggered 5/5 without, 5/5 with
+    stale-remote-state / does-not-falsely-assert-live-state triggered 5/5 without, 5/5 with
+    stale-remote-state / reasons-about-staleness triggered 5/5 without, 5/5 with
+    partial-pipeline / ran-the-part-it-could triggered 5/5 without, 5/5 with
+    partial-pipeline / ready-claim-qualifies-deploy triggered 1/5 without, 0/5 with
+  ──────────────────────────────────────────────────────────────────
+  mean pass rate unchanged at 100%
+  not distinguishable from noise (p=1.00)
+  95% CI  without 100% [90-100]   with 100% [90-100]
+  cost    78,008 → 77,802 tokens/run median (-206 for the skill)
+
+  40 runs. Transcripts are in the --json output.
