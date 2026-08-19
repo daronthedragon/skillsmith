@@ -53,9 +53,27 @@ Run this every time a skill is created or changed, in order.
    command that runs one prompt, write two or more prompts where the skill
    should change behaviour, and express each expected change as a regex the
    transcript will or will not contain. Never use a model as the judge.
+   - Match the behaviour, not a word. To check "when the agent claims
+     success, a real run backs it", put the claim regex in the check's
+     `given` field and the proof regex in `pattern`. The check only bites
+     when `given` matches, so a run that never makes the claim passes
+     vacuously - being cautious is not a failure. A check without `given`
+     that greps for one prescribed word reads a correct answer phrased
+     differently as a failure.
+   - Make the evidence observable. If a behaviour happens in a tool call -
+     running code, reading a file - the runner must emit a transcript that
+     contains the tool call, or the check cannot see it. For the Claude Code
+     CLI that means `--output-format stream-json --verbose`; plain text
+     shows only the final message and hides whether anything ran.
+   - Make the tasks tempt the failure. A prompt the base model already
+     passes cannot show a delta. Pick tasks where, without the skill, the
+     model is likely to do the wrong thing - claim a value it could recall
+     instead of compute, assert a state it cannot verify.
 8. **Run the eval and report the delta.** `skillsmith eval <dir>/eval.json`.
    A skill with no measurable delta is not done; it is decoration. Report
-   the without → with numbers verbatim in your summary.
+   the without → with numbers verbatim in your summary, and keep the eval
+   even when it shows no change - an eval that cannot fail proves nothing,
+   and the one that failed is the record that the passing one is honest.
 
 ## Rules
 
