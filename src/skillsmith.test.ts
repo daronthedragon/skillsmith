@@ -503,6 +503,66 @@ else console.log('Fixed, should work now. ' + prompt);
   }
 })
 
+test('runEval stages an output style (file + settings) only in the skill arm', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'skillsmith-test-'))
+  try {
+    // The shipped artifact for an output-style skill: a style file that gets
+    // copied into .claude/output-styles/ and switched on via settings.json.
+    const stylePath = join(dir, 'terse.md')
+    await writeFile(
+      stylePath,
+      '---\nname: terse\ndescription: answer first\n---\nAnswer first, cut the padding.\n',
+      'utf8',
+    )
+
+    // A fake runner that "obeys" only when it sees the style staged AND turned
+    // on in settings — exactly the two things stageRun must do, and only in the
+    // skill arm. Otherwise it hedges.
+    const fake = join(dir, 'style-runner.mjs')
+    await writeFile(
+      fake,
+      `import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+const [prompt, cwd] = process.argv.slice(2);
+const style = join(cwd, '.claude', 'output-styles', 'terse.md');
+const settings = join(cwd, '.claude', 'settings.json');
+let on = false;
+if (existsSync(style) && existsSync(settings)) {
+  const s = JSON.parse(readFileSync(settings, 'utf8'));
+  on = s.outputStyle === 'terse' && readFileSync(style, 'utf8').includes('cut the padding');
+}
+console.log(on ? 'Done. Ran: check. ' + prompt : 'Sure, this should work. ' + prompt);
+`,
+      'utf8',
+    )
+
+    const spec: EvalSpec = {
+      outputStyle: { name: 'terse', file: stylePath },
+      runner: `node ${JSON.stringify(fake)} {prompt} {skill}`,
+      repeat: 2,
+      timeoutMs: 30_000,
+      cases: [
+        {
+          id: 'style',
+          prompt: 'explain chmod',
+          checks: [
+            { id: 'applied', describe: 'style was active', pattern: 'Ran: ', expect: true },
+            { id: 'no-hedge', describe: 'drops the hedge', pattern: 'should work', expect: false },
+          ],
+        },
+      ],
+    }
+
+    const report = await runEval(spec)
+    assert.equal(report.results.length, 4, 'two arms x two runs')
+    assert.equal(report.baselineScore, 0, 'baseline has no style staged, so it hedges')
+    assert.equal(report.skillScore, 1, 'skill arm sees the style + settings and obeys')
+    assert.equal(report.significance.significant, true, '0/4 vs 4/4 is significant')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('a guarded check the baseline never triggers reports null, not a fake delta', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'skillsmith-test-'))
   try {

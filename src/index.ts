@@ -209,9 +209,18 @@ async function cmdEval(args: Args): Promise<number> {
   if (!Array.isArray(spec.cases) || spec.cases.length === 0) {
     throw new Error(`${specPath} needs a non-empty "cases" array`)
   }
-  if (typeof spec.skill !== 'string') throw new Error(`${specPath} is missing a "skill" path`)
-  // Skill path in the spec is relative to the spec file.
-  spec.skill = resolve(dirname(abs), spec.skill)
+  // A spec evaluates either a skill or an output style; paths are resolved
+  // relative to the spec file.
+  if (spec.outputStyle) {
+    if (typeof spec.outputStyle.name !== 'string' || typeof spec.outputStyle.file !== 'string') {
+      throw new Error(`${specPath} "outputStyle" needs a "name" and a "file"`)
+    }
+    spec.outputStyle.file = resolve(dirname(abs), spec.outputStyle.file)
+    spec.skill = spec.skill ? resolve(dirname(abs), spec.skill) : spec.outputStyle.file
+  } else {
+    if (typeof spec.skill !== 'string') throw new Error(`${specPath} is missing a "skill" path`)
+    spec.skill = resolve(dirname(abs), spec.skill)
+  }
 
   if (/REPLACE/.test(spec.runner)) {
     throw new Error('eval.json still has the placeholder runner. Set `runner` to the command that runs one prompt.')

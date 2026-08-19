@@ -58,6 +58,13 @@ export interface EvalSpec {
   timeoutMs?: number
   /** Runs in flight at once. Default 4. */
   concurrency?: number
+  /**
+   * Evaluate a Claude Code output style instead of a skill. When set, the skill
+   * arm stages the output-style file into `.claude/output-styles/` and turns it
+   * on via `.claude/settings.json` (`outputStyle`), rather than staging a skill.
+   * The baseline arm gets neither. `file` is resolved relative to the eval spec.
+   */
+  outputStyle?: { name: string; file: string }
 }
 
 export interface CaseResult {
@@ -232,14 +239,35 @@ export function scoreTranscript(transcript: string, checks: Check[]): CaseResult
  * otherwise leave it for the next run in the same arm to trip over, and it
  * makes runs safe to execute concurrently.
  */
-async function stageRun(skillPath: string, arm: 'baseline' | 'skill'): Promise<string> {
+async function stageRun(spec: EvalSpec, arm: 'baseline' | 'skill'): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), `skillsmith-${arm}-`))
   try {
     const { mkdir } = await import('node:fs/promises')
-    const skillsDir = join(dir, '.claude', 'skills')
+    const claudeDir = join(dir, '.claude')
+
+    if (spec.outputStyle) {
+      // Output-style arm: stage the style file and turn it on via settings.
+      // The baseline arm gets a plain project with no style.
+      if (arm === 'skill') {
+        const stylesDir = join(claudeDir, 'output-styles')
+        await mkdir(stylesDir, { recursive: true })
+        const raw = await readFile(spec.outputStyle.file, 'utf8')
+        await writeFile(join(stylesDir, `${spec.outputStyle.name}.md`), raw, 'utf8')
+        await writeFile(
+          join(claudeDir, 'settings.json'),
+          JSON.stringify({ outputStyle: spec.outputStyle.name }, null, 2),
+          'utf8',
+        )
+      } else {
+        await mkdir(claudeDir, { recursive: true })
+      }
+      return dir
+    }
+
+    const skillsDir = join(claudeDir, 'skills')
     await mkdir(skillsDir, { recursive: true })
     if (arm === 'skill') {
-      const raw = await readFile(skillPath, 'utf8')
+      const raw = await readFile(spec.skill, 'utf8')
       const name = /^name:\s*(.+)$/m.exec(raw)?.[1]?.trim() ?? 'skill-under-test'
       await mkdir(join(skillsDir, name), { recursive: true })
       await writeFile(join(skillsDir, name, 'SKILL.md'), raw, 'utf8')
@@ -423,7 +451,7 @@ export async function runEval(
 
   let done = 0
   const results = await pool(jobs, concurrency, async ({ arm, testCase, run }) => {
-    const cwd = await stageRun(spec.skill, arm)
+    const cwd = await stageRun(spec, arm)
     try {
       const command = spec.runner
         .replace('{prompt}', shellQuote(testCase.prompt))
