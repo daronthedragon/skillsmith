@@ -6,7 +6,7 @@
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A520-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-19%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-40%20passing-brightgreen)](#development)
 [![Zero dependencies](https://img.shields.io/badge/runtime%20deps-0-blueviolet)](package.json)
 [![License](https://img.shields.io/badge/license-MIT-black)](LICENSE)
 
@@ -23,6 +23,7 @@ A skill that works is a **procedure** with a **trigger**, a **persistence rule**
 | **`lint`** | Checks a SKILL.md against the rules that decide whether it *can* work, and says why each one exists |
 | **`new`** | Scaffolds a skill that passes lint on day one, with an eval spec beside it |
 | **`eval`** | Runs prompts with and without the skill through your agent runner, then reports the delta with a significance test, a confidence interval, and the token cost — so a real change is told apart from noise |
+| **`hook`** | Installs a `UserPromptSubmit` hook so a skill is re-asserted every turn — real persistence, not a promise in the prose |
 
 <p align="center">
   <img src="assets/lint-vibes.svg" width="720"
@@ -127,6 +128,22 @@ It exists because of a real afternoon: an agent declared a repo's contributor li
 ```bash
 mkdir -p ~/.claude/skills/skillsmith && cp skill/SKILL.md ~/.claude/skills/skillsmith/
 ```
+
+## Persistence, enforced
+
+A skill's `## Persistence` clause is a request the model can forget as the conversation grows. `skillsmith hook` makes it real:
+
+```bash
+skillsmith hook ~/.claude/skills/prove-it
+```
+
+This writes a self-contained `persist.mjs` next to the skill and wires a `UserPromptSubmit` entry into `~/.claude/settings.json`. Claude Code adds a `UserPromptSubmit` hook's stdout to the model's context at the start of every turn, and the script prints the skill's compact core — its name, rules, and observable effect, with wrapped bullets rejoined so nothing is truncated. The reminder is re-asserted each prompt, so the skill cannot drift out of attention; the model is not relied on to remember it. It costs a few tokens per turn, and `--remove` unwires it.
+
+The mechanism is verified, not assumed. A `UserPromptSubmit` hook that writes a marker file fires in a live `claude -p` run, and prove-it's actual `persist.mjs`, run as that hook, emits its reminder mid-session — captured and checked. The merge into `settings.json` is idempotent and preserves every existing key and hook (a test asserts this against a settings file that already has other hooks).
+
+`skillsmith persist <skill>` prints exactly what the hook injects, and `skillsmith hook <skill> --print` shows it without installing.
+
+This is the one thing a `SKILL.md` alone fundamentally cannot do — the [ponytail](https://github.com/DietrichGebert/ponytail) plugin persists the same way, via a `UserPromptSubmit` hook rather than trusting the prose.
 
 ## What this project is honest about
 

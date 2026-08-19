@@ -6,6 +6,9 @@ import { ParseError, parseSkill } from './parse.js'
 import { lint, RULES, type Finding } from './rules.js'
 import { scaffoldEval, scaffoldSkill } from './scaffold.js'
 import { fmtInterval } from './stats.js'
+import { installHook, previewPersist, removeHook } from './hook.js'
+import { buildPersistText } from './persist.js'
+import { homedir } from 'node:os'
 
 const useColour = process.stdout.isTTY || process.env.FORCE_COLOR !== undefined
 const paint = (code: string, t: string) => (useColour ? `[${code}m${t}[0m` : t)
@@ -26,18 +29,24 @@ const USAGE = `
     lint <SKILL.md|dir>       Check a skill against the rules that decide whether it can work
     new <name> [--oneshot]    Scaffold a skill that passes lint on day one, plus an eval spec
     eval <eval.json>          Run prompts with and without the skill; report the behaviour delta
+    hook <skill-dir>          Install a UserPromptSubmit hook so the skill persists every turn
+    persist <skill-dir>       Print the reminder the hook injects (what the runtime outputs)
     rules                     Print every lint rule and why it exists
 
   Options
     --json                    Machine-readable output
     --summary "<text>"        (new) One line on what the skill does
     --dir <path>              (new) Where to create it          (default ./<name>)
+    --settings <path>         (hook) settings.json to edit    (default ~/.claude/settings.json)
+    --remove                  (hook) Unwire the persistence hook
+    --print                   (hook) Show what would be injected without installing
     -h, --help
 
   Examples
     skillsmith new prove-it --summary "Nothing is done until it has been run."
     skillsmith lint ~/.claude/skills/prove-it
     skillsmith eval prove-it/eval.json
+    skillsmith hook ~/.claude/skills/prove-it
 `
 
 interface Args {
@@ -60,7 +69,7 @@ function parseArgs(argv: string[]): Args {
         continue
       }
       const next = argv[i + 1]
-      if (['summary', 'dir'].includes(body)) {
+      if (['summary', 'dir', 'settings'].includes(body)) {
         if (next === undefined || next.startsWith('--')) throw new Error(`--${body} needs a value`)
         flags.set(body, next)
         i++
@@ -278,6 +287,67 @@ function cmdRules(args: Args): number {
   return 0
 }
 
+/** Resolve a skill directory from either a directory or a SKILL.md path. */
+async function skillDirOf(target: string): Promise<string> {
+  const abs = resolve(target)
+  const info = await stat(abs).catch(() => null)
+  if (!info) throw new Error(`${target} does not exist`)
+  const dir = info.isDirectory() ? abs : dirname(abs)
+  if (!(await stat(join(dir, 'SKILL.md')).catch(() => null))) {
+    throw new Error(`${dir} has no SKILL.md`)
+  }
+  return dir
+}
+
+const defaultSettings = () => join(homedir(), '.claude', 'settings.json')
+
+async function cmdPersist(args: Args): Promise<number> {
+  const target = args.positional[0]
+  if (!target) throw new Error('persist needs a path to a skill directory or SKILL.md')
+  process.stdout.write(await previewPersist(await skillDirOf(target)))
+  return 0
+}
+
+async function cmdHook(args: Args): Promise<number> {
+  const target = args.positional[0]
+  if (!target) throw new Error('hook needs a path to a skill directory or SKILL.md')
+  const skillDir = await skillDirOf(target)
+  const settingsPath = String(args.flags.get('settings') ?? defaultSettings())
+
+  if (args.flags.has('print')) {
+    process.stdout.write('\n' + c.dim('  injected on every UserPromptSubmit:') + '\n\n')
+    process.stdout.write(buildPersistText(await readFile(join(skillDir, 'SKILL.md'), 'utf8')))
+    process.stdout.write('\n')
+    return 0
+  }
+
+  if (args.flags.has('remove')) {
+    const { removed } = await removeHook({ skillDir, settingsPath })
+    process.stdout.write(
+      removed
+        ? `\n  ${c.green('removed')} the persistence hook from ${c.cyan(settingsPath)}\n\n`
+        : `\n  ${c.dim('no persistence hook for this skill was present')}\n\n`,
+    )
+    return 0
+  }
+
+  const r = await installHook({ skillDir, settingsPath })
+  const out: string[] = ['']
+  out.push(`  ${c.bold(c.magenta('skillsmith hook'))}  ${c.dim(skillDir)}`)
+  out.push('')
+  out.push(`  runtime   ${c.cyan(r.scriptPath)}`)
+  out.push(
+    `  settings  ${c.cyan(r.settingsPath)}  ${r.added ? c.green('(hook added)') : c.dim('(already present)')}`,
+  )
+  out.push(`  wired     ${c.dim('UserPromptSubmit → ' + r.command)}`)
+  out.push('')
+  out.push(c.dim('  The skill is now re-asserted at the start of every turn. It costs a few'))
+  out.push(c.dim('  tokens per prompt. Undo with `skillsmith hook <dir> --remove`.'))
+  out.push('')
+  process.stdout.write(out.join('\n'))
+  return 0
+}
+
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2))
   switch (args.command) {
@@ -287,6 +357,10 @@ async function main(): Promise<number> {
       return cmdNew(args)
     case 'eval':
       return cmdEval(args)
+    case 'hook':
+      return cmdHook(args)
+    case 'persist':
+      return cmdPersist(args)
     case 'rules':
       return cmdRules(args)
     default:

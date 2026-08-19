@@ -83,7 +83,11 @@ Run this every time a skill is created or changed, in order.
 - Quality words are not instructions. Replace "robust", "clean", "helpful",
   "best practices" with the concrete behaviour meant.
 - A behavioural skill states that it persists and names its off switch. A
-  one-shot skill says "one-shot" in its description and skips both.
+  one-shot skill says "one-shot" in its description and skips both. When the
+  prose clause is not enough and the skill must hold across a long session,
+  enforce it with `skillsmith hook <skill>`, which re-asserts the skill's core
+  every turn through a UserPromptSubmit hook instead of trusting the model to
+  remember.
 - Keep the body under 250 lines. Reference material goes in a separate file
   the skill points at, not in the skill.
 - Never claim a skill works until the eval shows a delta. "Lints clean" is
