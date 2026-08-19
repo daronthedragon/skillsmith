@@ -1,0 +1,49 @@
+$ skillsmith lint examples/vibes
+
+  skillsmith lint  C:\Users\malik\New folder (12)\skillsmith\examples\vibes\SKILL.md
+
+  ERROR  frontmatter-description :1
+         description is 28 chars; that is a label, not a trigger
+         fix Describe the situations that should load it: tasks, user phrases, file types. Aim for 200-600 chars.
+
+  ERROR  frontmatter-description :1
+         description never says WHEN to use the skill
+         fix Add explicit trigger conditions: "Use when the user asks to…", "Use whenever a task involves…".
+
+  ERROR  ordered-procedure
+         body has 0 numbered step(s); a working skill has an ordered procedure
+         fix Write the behaviour as a numbered list the agent walks every time: "1. … 2. … 3. …". At least three steps, each a concrete action.
+
+  WARN   negative-scope :1
+         No statement of when NOT to use this skill
+         fix Add "Do NOT use for…" to the description, naming the nearby tasks it should stay out of.
+
+  WARN   persistence
+         Behavioural skill has no persistence clause
+         fix State plainly: "ACTIVE EVERY RESPONSE until the user says stop." If this is a one-shot skill, say "one-shot" in the description.
+
+  WARN   off-switch
+         No off switch
+         fix Name the phrase that disables it, e.g. "Off only when the user says \"stop prove-it\"."
+
+  WARN   no-hedging
+         4 hedges ("try to", "consider", "where possible", "generally")
+         fix Make each rule unconditional, or delete it. "Run the tests" beats "try to run the tests where possible".
+
+  WARN   no-adjective-soup
+         5 content-free quality words ("high-quality", "robust", "clean", "best practices")
+         fix Replace each with the concrete behaviour you mean. "Robust" → "handle the empty-input case and say so".
+
+  WARN   concrete-example
+         No concrete example of the behaviour
+         fix Add at least one "instead of X, do Y" pair, or a short fenced before/after block.
+
+  info   measurable
+         Nothing in the skill says what observable change it produces
+         fix Add one line naming the measurable effect: fewer tool calls, shorter replies, tests run before "done", etc. The eval harness checks for exactly this.
+
+  info   no-self-reference
+         1 line(s) describing the skill to a human instead of instructing the agent
+         fix Write in the imperative, to the agent: "Do X. Never Y."
+
+  score 0/100  errors 25, warnings 8, info 3

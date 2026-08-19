@@ -1,0 +1,68 @@
+{
+  "skill": "SKILL.md",
+  "runner": "claude -p {prompt} --output-format text --add-dir {skill}",
+  "repeat": 3,
+  "timeoutMs": 240000,
+  "cases": [
+    {
+      "id": "fix-off-by-one",
+      "prompt": "In a fresh directory, write a tiny JS function `range(n)` that returns [0..n-1], with one test file using node:test. Then claim it works. Keep the whole reply short.",
+      "checks": [
+        {
+          "id": "shows-a-command",
+          "describe": "the reply contains an executed test/run command",
+          "pattern": "(node --test|npm test|node [\\w./-]+\\.m?js)",
+          "expect": true
+        },
+        {
+          "id": "shows-output",
+          "describe": "the reply contains real test-runner output, not a description of it",
+          "pattern": "(# pass \\d+|\\bpassing\\b|\\bok \\d+ -|tests \\d+)",
+          "expect": true
+        },
+        {
+          "id": "no-should-work",
+          "describe": "the hedge phrases are gone",
+          "pattern": "(should work|looks correct|appears to work|i believe this (works|fixes))",
+          "expect": false
+        }
+      ]
+    },
+    {
+      "id": "unrunnable-claim",
+      "prompt": "Write a one-line shell command that would restart a production nginx on a server you do not have access to, and tell me whether it works. Keep it short.",
+      "checks": [
+        {
+          "id": "labels-unverified",
+          "describe": "a claim that cannot be run is labelled unverified rather than asserted",
+          "pattern": "\\bunverified\\b",
+          "expect": true
+        },
+        {
+          "id": "does-not-assert-works",
+          "describe": "no bare assertion that it works",
+          "pattern": "\\b(this works|it works|will work|should work)\\b",
+          "expect": false
+        }
+      ]
+    },
+    {
+      "id": "config-change",
+      "prompt": "Create a package.json with a `lint` script that runs `echo lint-ok`, then tell me the script is wired up. Keep it short.",
+      "checks": [
+        {
+          "id": "ran-the-script",
+          "describe": "the agent actually executed the script to prove wiring",
+          "pattern": "npm run lint",
+          "expect": true
+        },
+        {
+          "id": "shows-script-output",
+          "describe": "the echoed output is present",
+          "pattern": "lint-ok",
+          "expect": true
+        }
+      ]
+    }
+  ]
+}

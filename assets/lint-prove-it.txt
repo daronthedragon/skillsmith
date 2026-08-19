@@ -1,0 +1,6 @@
+$ skillsmith lint examples/prove-it
+
+  skillsmith lint  C:\Users\malik\New folder (12)\skillsmith\examples\prove-it\SKILL.md
+
+  No findings. This skill has the structure of one that works.
+  score 100/100  errors 25, warnings 8, info 3
