@@ -129,13 +129,33 @@ A skill is worth shipping when an eval that *can* fail shows a *significant* pas
 
 Five mechanics make the eval a measurement rather than a demo:
 
-- **Magnitude effects, not only pass/fail.** A checklist cannot see a skill whose value is *less of something* — shorter answers, fewer tokens, less code. The eval measures continuous per-run metrics (response length, output tokens) and compares the arms with a non-parametric **Mann-Whitney U** test. This is what caught [terse](https://github.com/daronthedragon/terse): every binary check read 100% in both arms, but response length fell **1,297 → 622 chars, −52%, p = 0.005** — a real win the pass-rate view was blind to. Because the metrics are derived from the stored transcripts, `eval --render` shows them on a report captured before the feature existed, no re-run.
+- **Magnitude effects, not only pass/fail.** A checklist cannot see a skill whose value is *less of something* — shorter answers, fewer tokens, less code. The eval measures continuous per-run metrics (response length, output tokens, wall clock) and compares the arms with a non-parametric **Mann-Whitney U** test. This is what caught [terse](https://github.com/daronthedragon/terse): every binary check read ~100% in both arms, but response length fell **2,069 → 654 chars, −68%, p = 2.7e-14** — a real win the pass-rate view was blind to. Because the metrics are derived from the stored transcripts, `eval --render` shows them on a report captured before the feature existed, no re-run.
 - **Significance, not just a delta.** Every pass rate carries a 95% Wilson interval, and the two arms are compared with a pooled two-proportion test. The exit code is success only when the improvement is *significant*, not merely positive — which is why the run above exits non-zero. A delta you cannot distinguish from noise is not a result, and an earlier version of the harness happily reported one (a +33% on three runs that vanished under more).
 - **Cost accounting.** Median tokens per run for each arm, and what the skill adds. A skill that helps but costs 3,000 tokens a turn is a different decision from one that is free; the report makes that visible. The token count is read from the `result` event's authoritative total — an earlier regex summed the same usage across events and triple-counted it.
 - **A stream-json runner**, so the transcript contains the actual `tool_use` and `tool_result` events. Under `--output-format text` a tool run is invisible — a model that recites a value from memory looks identical to one that ran it. The stream format makes "did it actually run" directly observable.
 - **Implication guards** (`given` on a check): *when* the agent claims success, a real run must be present. A transcript that never makes the claim passes vacuously — being cautious is not a failure. This is what fixes keyword-matching: an earlier check read 0% because the model said *"No — not from here"* instead of the prescribed word "unverified", which is the right behaviour phrased differently.
 
-Runs are isolated (each gets its own working directory, so one run's files never leak into the next) and executed with bounded concurrency (`concurrency`, default 4), so a 40-run eval finishes in minutes rather than the better part of an hour.
+Runs are isolated (each gets its own working directory, so one run's files never leak into the next) and executed with bounded concurrency (`concurrency`, default 4), so a 40-run eval finishes in minutes rather than the better part of an hour. Cleanup of those directories is best-effort on purpose: it used to sit in a `finally` and throw `EBUSY` on Windows — where the runner's own handles briefly outlive the process — which aborted the whole run and discarded 80 already-paid results. A leftover temp directory is worth far less than the run.
+
+### Gates, so a measured claim cannot rot
+
+A number in a README is a claim about the past. The model changes, the effect shrinks, and the README keeps asserting what used to be true. Two flags turn the eval into a check that fails instead:
+
+```bash
+skillsmith eval terse/eval.json --min-reduction 50
+```
+
+`--min-reduction <pct>` fails unless the metric still shrank by at least that much, *significantly* — `--metric` picks which one (default `response length`). `--min-pass <pct>` floors the skill arm's pass rate instead, which is what a **safety** benchmark needs: there the skill is not supposed to beat the baseline, only to avoid breaking what already worked, so "did it win" is the wrong question. Both set the exit code, in `--json` mode too, so CI can capture the report and enforce the threshold in a single paid run rather than paying twice.
+
+### Measuring a skill that ships as an output style
+
+A behavioural skill does not have to be a `SKILL.md`. Claude Code output styles are folded into the system prompt for the whole session, and a skill that is purely a stance belongs there. Point the spec at one and the eval stages it exactly as a user installs it — the style file under `.claude/output-styles/`, and `outputStyle` set in `.claude/settings.json` — with a plain project for the baseline arm:
+
+```json
+"outputStyle": { "name": "terse", "file": "output-styles/terse.md" }
+```
+
+This matters more than it sounds: without it you measure a paraphrase of the rules in a different delivery mechanism, and report the result as if it described the thing you shipped.
 
 ### The first eval, and why it taught nothing
 
