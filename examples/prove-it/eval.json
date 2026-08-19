@@ -1,6 +1,6 @@
 {
   "skill": "SKILL.md",
-  "runner": "claude -p {prompt} --output-format text --add-dir {skill}",
+  "runner": "cd {skill} && claude -p {prompt} --output-format text --dangerously-skip-permissions --no-session-persistence < /dev/null",
   "repeat": 3,
   "timeoutMs": 240000,
   "cases": [

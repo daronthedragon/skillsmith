@@ -232,7 +232,8 @@ test('runEval stages the skill only in the skill arm and reports a real delta', 
       `import { readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 const [prompt, skillsDir] = process.argv.slice(2);
-const hasSkill = existsSync(skillsDir) && readdirSync(skillsDir).some((d) => existsSync(join(skillsDir, d, 'SKILL.md')));
+const sk = join(skillsDir, '.claude', 'skills');
+const hasSkill = existsSync(sk) && readdirSync(sk).some((d) => existsSync(join(sk, d, 'SKILL.md')));
 if (hasSkill) console.log('Fixed. Ran: npm test -> 12 passing. ' + prompt);
 else console.log('Fixed, should work now. ' + prompt);
 `,

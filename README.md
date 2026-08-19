@@ -88,10 +88,10 @@ Lint tells you a skill *could* work. Only running it tells you it *does*.
 
 **No model-as-judge.** A judge is another prompt whose behaviour you cannot verify, and the whole point here is verification. Checks are regexes you can read.
 
-The runner is a command template: `{prompt}` is the shell-quoted prompt, `{skill}` the staged skills directory. For the Claude Code CLI:
+The runner is a command template: `{prompt}` is the shell-quoted prompt, `{skill}` a staged project directory whose `.claude/skills/` holds the skill (or nothing, for the baseline arm). Run the agent from inside it so project-level skill loading picks the skill up. For the Claude Code CLI:
 
 ```json
-"runner": "claude -p {prompt} --output-format text --add-dir {skill}"
+"runner": "cd {skill} && claude -p {prompt} --output-format text --dangerously-skip-permissions < /dev/null"
 ```
 
 Any agent that can run one prompt headlessly and print the transcript will do.

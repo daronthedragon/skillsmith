@@ -131,13 +131,21 @@ export function scoreTranscript(transcript: string, checks: Check[]): CaseResult
  * both arms see the same harness with only the skill varying.
  */
 async function stageSkill(skillPath: string, arm: 'baseline' | 'skill'): Promise<string> {
+  // Each arm gets a throwaway project directory. Agents that load project
+  // skills from `<cwd>/.claude/skills/` pick the skill up simply by running
+  // with this directory as cwd, which is what the `{skill}` placeholder is for
+  // (e.g. `cd {skill} && claude -p {prompt}`). The baseline arm gets the same
+  // layout with the skills folder empty, so the only difference between arms
+  // is the skill.
   const dir = await mkdtemp(join(tmpdir(), `skillsmith-${arm}-`))
+  const { mkdir } = await import('node:fs/promises')
+  const skillsDir = join(dir, '.claude', 'skills')
+  await mkdir(skillsDir, { recursive: true })
   if (arm === 'skill') {
     const raw = await readFile(skillPath, 'utf8')
     const name = /^name:\s*(.+)$/m.exec(raw)?.[1]?.trim() ?? 'skill-under-test'
-    const { mkdir } = await import('node:fs/promises')
-    await mkdir(join(dir, name), { recursive: true })
-    await writeFile(join(dir, name, 'SKILL.md'), raw, 'utf8')
+    await mkdir(join(skillsDir, name), { recursive: true })
+    await writeFile(join(skillsDir, name, 'SKILL.md'), raw, 'utf8')
   }
   return dir
 }

@@ -84,7 +84,7 @@ export function scaffoldEval(name: string, skillPath: string): string {
   return JSON.stringify(
     {
       skill: skillPath,
-      runner: 'REPLACE: command that runs one prompt and prints the transcript, e.g. claude -p {prompt} --output-format text',
+      runner: 'REPLACE: command that runs one prompt from inside {skill} and prints the transcript, e.g. cd {skill} && claude -p {prompt} --output-format text',
       repeat: 2,
       timeoutMs: 180000,
       cases: [
