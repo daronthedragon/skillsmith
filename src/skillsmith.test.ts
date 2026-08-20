@@ -3,7 +3,7 @@ import test from 'node:test'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { computeMetrics, gateReport, parseOutputTokens, parseTokens, runEval, scoreTranscript, shellQuote, type CaseResult, type EvalReport, type EvalSpec } from './eval.js'
+import { computeMetrics, gateReport, parseOutputTokens, parseTokens, runEval, scoreTranscript, shellQuote, type CaseResult, type Check, type EvalReport, type EvalSpec } from './eval.js'
 import { ParseError, parseSkill } from './parse.js'
 import { lint, RULES } from './rules.js'
 import { scaffoldEval, scaffoldSkill } from './scaffold.js'
@@ -536,6 +536,57 @@ console.log('ok');
     assert.ok(report.results.every((r) => r.transcript.includes('ok')), 'transcripts intact')
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+})
+
+test('a check with examples fails fast when its own pattern is mangled', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'skillsmith-test-'))
+  try {
+    await writeFile(join(dir, 'SKILL.md'), GOOD, 'utf8')
+    const base = {
+      skill: join(dir, 'SKILL.md'),
+      runner: 'node -e "console.log(1)" {prompt} {skill}',
+      timeoutMs: 30_000,
+    }
+    const withPattern = (pattern: string, examples: Check['examples']): EvalSpec => ({
+      ...base,
+      cases: [{ id: 'c', prompt: 'p', checks: [{ id: 'k', describe: '', pattern, expect: true, examples }] }],
+    })
+
+    // The real bug: a shell ate the backslash, so a word-boundary escape arrived as a
+    // literal backspace character. The pattern then matches nothing and the
+    // report reads 0%, which looks like the skill failing rather than the check.
+    const backspace = String.fromCharCode(8)
+    await assert.rejects(
+      () => runEval(withPattern(`(${backspace}400${backspace})`, { match: ['$400 under.'] })),
+      /does not match its own example/,
+      'a pattern that cannot match its own example must fail before any run',
+    )
+
+    // The other real bug: $ is end-of-string, so this could never match.
+    await assert.rejects(
+      () => runEval(withPattern('$400', { match: ['$400 under.'] })),
+      /does not match its own example/,
+    )
+
+    // A check too loose to tell a right answer from a wrong one.
+    await assert.rejects(
+      () =>
+        runEval(
+          withPattern('cap', {
+            match: ['62^7, enough for your 10M cap'],
+            reject: ['I need to know your row cap first'],
+          }),
+        ),
+      /matches a string it should reject/,
+    )
+
+    // A correct pattern passes validation and the eval proceeds.
+    const good = withPattern(String.raw`\b400\b`, { match: ['$400 under.'], reject: ['no number here'] })
+    const report = await runEval(good)
+    assert.equal(report.results.length, 2, 'a self-consistent check runs normally')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
   }
 })
 

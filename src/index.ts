@@ -249,11 +249,26 @@ async function cmdEval(args: Args): Promise<number> {
     if (typeof spec.outputStyle.name !== 'string' || typeof spec.outputStyle.file !== 'string') {
       throw new Error(`${specPath} "outputStyle" needs a "name" and a "file"`)
     }
-    spec.outputStyle.file = resolve(dirname(abs), spec.outputStyle.file)
+    const given = spec.outputStyle.file
+    spec.outputStyle.file = resolve(dirname(abs), given)
     spec.skill = spec.skill ? resolve(dirname(abs), spec.skill) : spec.outputStyle.file
+    // Fail here, not thirty runs in. A relative path is resolved against the
+    // SPEC's directory, which is a trap when the spec is kept somewhere other
+    // than the repo it points into: staging then throws ENOENT per run and the
+    // whole eval ends with an empty report after the calls are already paid for.
+    if (!(await stat(spec.outputStyle.file).catch(() => null))) {
+      throw new Error(
+        `${specPath}: outputStyle.file "${given}" does not exist.\n` +
+          `  Resolved to: ${spec.outputStyle.file}\n` +
+          '  Relative paths are resolved against the spec file\'s own directory; use an absolute path if the spec lives elsewhere.',
+      )
+    }
   } else {
     if (typeof spec.skill !== 'string') throw new Error(`${specPath} is missing a "skill" path`)
     spec.skill = resolve(dirname(abs), spec.skill)
+    if (!(await stat(spec.skill).catch(() => null))) {
+      throw new Error(`${specPath}: skill "${spec.skill}" does not exist.`)
+    }
   }
 
   if (/REPLACE/.test(spec.runner)) {

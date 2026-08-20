@@ -10,6 +10,18 @@ import { mannWhitney, twoProportion, wilson, type Comparison, type Interval, typ
  * behaviour you cannot verify, and the whole point here is verification.
  */
 export interface Check {
+  /**
+   * Optional self-test for this check's pattern: strings it must match, and
+   * strings it must not. Validated before a single API call is spent.
+   *
+   * A regex is written once and then trusted forever, and a mangled one does
+   * not announce itself - it silently reports 0%, which reads as "the skill
+   * broke" rather than "the check is broken". That has happened three times in
+   * this project, twice from a shell eating a backslash (`\b` arriving as a
+   * backspace character) and once from `$400`, where `$` is end-of-string and
+   * the pattern could never match anything.
+   */
+  examples?: { match?: string[]; reject?: string[] }
   /** Short id shown in the report. */
   id: string
   /** What this check is looking for, in plain words. */
@@ -303,6 +315,36 @@ function validateSpec(spec: EvalSpec): void {
       }
       compile(check.pattern, 'pattern')
       if (check.given !== undefined) compile(check.given, 'given')
+
+      // A check that carries examples is tested against them here, before any
+      // call is made, so a broken pattern fails in a second rather than after
+      // an hour of paid runs that all report 0%.
+      if (check.examples) {
+        const re = () => new RegExp(check.pattern, check.flags ?? 'gi')
+        const label = `Check "${testCase.id}/${check.id}"`
+        for (const sample of check.examples.match ?? []) {
+          if (!re().test(sample)) {
+            throw new Error(
+              `${label} does not match its own example: ${JSON.stringify(sample)}
+` +
+                `  pattern: ${JSON.stringify(check.pattern)}
+` +
+                '  A pattern that fails its own example is mangled or wrong; fix it before spending a run.',
+            )
+          }
+        }
+        for (const sample of check.examples.reject ?? []) {
+          if (re().test(sample)) {
+            throw new Error(
+              `${label} matches a string it should reject: ${JSON.stringify(sample)}
+` +
+                `  pattern: ${JSON.stringify(check.pattern)}
+` +
+                '  A check this loose will pass on replies that are actually wrong.',
+            )
+          }
+        }
+      }
     }
   }
 }
