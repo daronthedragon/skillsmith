@@ -294,6 +294,30 @@ function renderEvalReport(report: EvalReport, showFailures = false): { text: str
   const subject = report.spec.skill ?? report.spec.outputStyle?.file ?? report.spec.outputStyle?.name
   out.push(`  ${c.bold(c.magenta('skillsmith eval'))}  ${c.dim(subject ? basename(subject) : 'eval')}`)
   out.push('')
+
+  // A run that never executed still has a transcript - the error text - and that
+  // text scores like any reply: short, missing the expected words, "the skill
+  // truncated the answer". This project misread its own benchmarks three times
+  // that way (a killed timeout, a CLI that would not spawn, a broken install)
+  // before this warning existed. Contamination is stated before any rate is.
+  const failedBy = (arm: 'baseline' | 'skill') =>
+    report.results.filter((r) => r.arm === arm && r.exitCode !== 0).length
+  const failedSkill = failedBy('skill')
+  const failedBaseline = failedBy('baseline')
+  if (failedSkill + failedBaseline > 0) {
+    const total = report.results.length
+    out.push(
+      c.red(
+        `  WARNING  ${failedSkill + failedBaseline} of ${total} runs did not exit 0 ` +
+          `(skill ${failedSkill}, baseline ${failedBaseline}).`,
+      ),
+    )
+    out.push(
+      c.red('           Their transcript is an error message, not a reply, so every rate below is contaminated.'),
+    )
+    out.push(c.dim('           Read them with --failures before believing any number here.'))
+    out.push('')
+  }
   out.push(`  ${'case / check'.padEnd(40)}${'without'.padStart(9)}${'with'.padStart(8)}${'delta'.padStart(9)}`)
   out.push(`  ${'─'.repeat(66)}`)
   // A guarded check that rarely triggered is worth flagging: a high pass rate

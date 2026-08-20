@@ -588,6 +588,26 @@ test('the regression gate passes a real reduction and fails a shrunken one', asy
   assert.equal(under.ok, false, '80% fails a 95% floor')
   assert.match(under.line, /skill pass rate 80% vs 95% required  FAIL/)
 
+  // Runs that never executed must not be laundered into a passing gate: their
+  // transcripts are error text, and scoring it is how a broken harness reports
+  // a finding about the skill.
+  const contaminated = {
+    ...strong,
+    results: strong.results.map((r, i) => (r.arm === 'skill' && i % 2 === 0 ? { ...r, exitCode: 1 } : r)),
+  } as unknown as EvalReport
+  const dirty = gateReport(contaminated, { minReduction: 50, metric: 'response length' })
+  assert.equal(dirty.ok, false, 'a run of failed executions fails the gate whatever the metric says')
+  assert.match(dirty.line, /did not exit 0[\s\S]*contaminated/)
+
+  // One flake in twenty is tolerated rather than failing the build.
+  const oneFlake = {
+    ...strong,
+    results: strong.results.map((r, i) => (i === 0 ? { ...r, exitCode: 1 } : r)),
+  } as unknown as EvalReport
+  const flaky = gateReport(oneFlake, { minReduction: 50, metric: 'response length' })
+  assert.equal(flaky.ok, true, 'a single flake does not fail an otherwise clean run')
+  assert.match(flaky.line, /tolerated/)
+
   // Both gates together: the reduction passes but the floor does not.
   const both = gateReport({ ...scored, skillScore: 0.5 } as unknown as EvalReport, {
     minReduction: 50,

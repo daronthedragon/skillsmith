@@ -463,6 +463,20 @@ export function gateReport(
   const lines: string[] = []
   let ok = true
 
+  // Before any threshold: did the runs actually run? A gate that passes on
+  // transcripts which are really error messages is worse than no gate, because
+  // it launders a broken harness into a green build. One in ten is the line -
+  // an occasional flake is tolerable, a systematic failure is not.
+  const failed = report.results.filter((r) => r.exitCode !== 0).length
+  if (failed > 0) {
+    const pct = (failed / report.results.length) * 100
+    const tolerable = pct <= 10
+    lines.push(
+      `  gate: ${failed}/${report.results.length} runs did not exit 0 (${pct.toFixed(0)}%)  ${tolerable ? 'tolerated' : 'FAIL - results are contaminated'}`,
+    )
+    ok &&= tolerable
+  }
+
   if (opts.minReduction !== undefined) {
     const metric = opts.metric ?? 'response length'
     const metrics = computeMetrics(report.results)
